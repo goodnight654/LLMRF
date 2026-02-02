@@ -1,0 +1,80 @@
+; Top Design: "test_lib:test:schematic"
+; Netlisted using Hierarchy Policy: "Standard"
+
+Options ResourceUsage=yes UseNutmegFormat=no EnableOptim=no TopDesignName="test_lib:test:schematic" DcopOutputNodeVoltages=yes DcopOutputPinCurrents=yes DcopOutputAllSweepPoints=no DcopOutputDcopType=0
+"PP1020_MS_PDK":MS_1  N__11 N__2 NOF=10 UGW=75.0 um Temp=25 LayoutOption=1 NOISE=1 BV=6 
+"PP1020_MS_PDK":MS_2  N__11 N__2 NOF=10 UGW=75.0 um Temp=25 LayoutOption=1 NOISE=1 BV=6 
+C:C1  N__2 Vout C=342.5897776 fF tune{ 244.706984 fF to 734.120952 fF by 48.9413968 fF } 
+L:L1  Vout 0 L=84.61525184 pH tune{ 37.774666 pH to 113.323998 pH by 7.5549332 pH } R=1e-12 Ohm Noise=yes  
+L:L2  Vs_high2 N__2 L=140.5 pH R=1e-12 Ohm Noise=yes  
+V_Source:SRC1  N__6 0 Type="V_DC" Vdc=4 V SaveCurrent=1 
+Short:Is_high2  N__6 Vs_high2 Mode=0 SaveCurrent=yes 
+Short:I_Probe2  N__8 N__11 Mode=0 SaveCurrent=yes 
+R:R1  N__8 N__1 R=2000 Ohm Noise=yes 
+Short:l_load  Vout N__9 Mode=0 SaveCurrent=yes 
+Port:TermG1  N__9 0 Num=2 Z=50 Ohm Noise=yes 
+V_Source:SRC2  N__1 0 Type="V_DC" Vdc=-0.4 V SaveCurrent=1 
+L:L3  N__11 0 L=50.3656026 pH tune{ 6.47557 pH to 60 pH by 1.295114 pH } R=1e-12 Ohm Noise=yes  
+C:C2  N__7 N__11 C=1.3730500716169 pF tune{ 0.793252 pF to 20 pF logScale } 
+"PP1020_MS_PDK":MS_3  N__15 N__7 NOF=10 UGW=75.0 um Temp=25 LayoutOption=1 NOISE=1 BV=6 
+L:L4  Vs_high1 N__7 L=33.5 pH R=1e-12 Ohm Noise=yes  
+V_Source:SRC3  N__13 0 Type="V_DC" Vdc=4 V SaveCurrent=1 
+Short:Is_high1  N__13 Vs_high1 Mode=0 SaveCurrent=yes 
+V_Source:SRC4  N__14 0 Type="V_DC" Vdc=-0.1 V SaveCurrent=1 
+R:R2  N__4 N__14 R=2000 Ohm Noise=yes 
+C:C3  Vinput N__15 C=620.01496788 fF tune{ 234.8541545 fF to 704.5624635 fF by 46.9708309 fF } 
+L:L5  Vinput 0 L=65.23124608 pH tune{ 33.281248 pH to 99.843744 pH by 6.6562496 pH } R=1e-12 Ohm Noise=yes  
+Short:I_input  N__3 Vinput Mode=0 SaveCurrent=yes 
+Port:PORT1  N__3 0 Num=1 Z=50 Ohm P[1]=dbmtow(RFpower) Freq[1]=28 GHz    Noise=yes Pac=polar(dbmtow(0),0) 
+Short:I_Probe6  N__4 N__15 Mode=0 SaveCurrent=yes 
+PP1020_Corner=0
+PP1020_CornerRES=0
+PP1020_CornerCAP=0
+PP1020_Met2T=2 um
+PP1020_Thickness=50 um
+#include "F:/DDDDDDDDDDDDDD/WIN/PP10-20/202409/WIN_PP10_20_DESIGN_KIT//circuit/models/common.net"
+#include "F:/DDDDDDDDDDDDDD/WIN/PP10-20/202409/WIN_PP10_20_DESIGN_KIT//circuit/models/techonology.net"
+S_Param:SP1 CalcS=yes CalcY=no CalcZ=no GroupDelayAperture=1e-4 FreqConversion=no FreqConversionPort=1 StatusLevel=2 CalcNoise=no SortNoise=0 BandwidthForNoise=1.0 Hz DevOpPtLevel=0 SPSS_WSP=yes \
+SweepVar="freq" SweepPlan="SP1_stim" OutputPlan="SP1_Output" 
+
+SweepPlan: SP1_stim Start=25 GHz Stop=35 GHz Step=0.25 GHz 
+
+OutputPlan:SP1_Output \
+      Type="Output" \
+      UseEquationNestLevel=yes \
+      EquationNestLevel=2 \
+      UseSavedEquationNestLevel=yes \
+      SavedEquationNestLevel=2
+
+#load "python","LinearCollapse"
+Component Module="LinearCollapse" Type="ModelExtractor" NetworkRepresentation=2
+HB:HB1 MaxOrder=4 Freq[1]=28 GHz Order[1]=2 StatusLevel=2 Restart=no HBSS_WSP=0 SweepVar="RFpower" SweepPlan="HB1_stim" OutputPlan="HB1_Output" 
+
+SweepPlan: HB1_stim Start=-10 Stop=20 Step=1 
+
+OutputPlan:HB1_Output \
+      Type="Output" \
+      UseNodeNestLevel=yes \
+      NodeNestLevel=2 \
+      UseEquationNestLevel=yes \
+      EquationNestLevel=2 \
+      UseSavedEquationNestLevel=yes \
+      SavedEquationNestLevel=2 \
+      UseDeviceCurrentNestLevel=no \
+      DeviceCurrentNestLevel=0 \
+      DeviceCurrentDeviceType="All" \
+      DeviceCurrentSymSyntax=yes \
+      UseCurrentNestLevel=yes \
+      CurrentNestLevel=999 \
+      UseDeviceVoltageNestLevel=no \
+      DeviceVoltageNestLevel=0 \
+      DeviceVoltageDeviceType="All"
+
+Tran:HB1_tran HB_Sol=1 SteadyState=1 StatusLevel=3 \
+Freq[1]=28 GHz Order[1]=2 
+
+Component:tahb_HB1 Module="ATAHB" Type="ModelExtractor" \ 
+ Tran_Analysis="HB1_tran" HB_Analysis="HB1" 
+
+
+RFpower=10

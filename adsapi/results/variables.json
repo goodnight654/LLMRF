@@ -1,0 +1,56 @@
+[
+  {
+    "name": "C1",
+    "param": "C",
+    "value": 342.5897776,
+    "min": 244.706984,
+    "max": 734.120952,
+    "type": "tune",
+    "device_type": "C"
+  },
+  {
+    "name": "L1",
+    "param": "L",
+    "value": 84.61525184,
+    "min": 37.774666,
+    "max": 113.323998,
+    "type": "tune",
+    "device_type": "L"
+  },
+  {
+    "name": "L3",
+    "param": "L",
+    "value": 50.3656026,
+    "min": 6.47557,
+    "max": 60.0,
+    "type": "tune",
+    "device_type": "L"
+  },
+  {
+    "name": "C2",
+    "param": "C",
+    "value": 1.3730500716169,
+    "min": 0.793252,
+    "max": 20.0,
+    "type": "tune",
+    "device_type": "C"
+  },
+  {
+    "name": "C3",
+    "param": "C",
+    "value": 620.01496788,
+    "min": 234.8541545,
+    "max": 704.5624635,
+    "type": "tune",
+    "device_type": "C"
+  },
+  {
+    "name": "L5",
+    "param": "L",
+    "value": 65.23124608,
+    "min": 33.281248,
+    "max": 99.843744,
+    "type": "tune",
+    "device_type": "L"
+  }
+]

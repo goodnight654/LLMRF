@@ -1,0 +1,29 @@
+{
+  "_comment": "=== LLMRF 配置文件 - 唯一需要修改的地方 ===",
+  
+  "ads": {
+    "_comment": "修改为你的 ADS 安装路径",
+    "install_path": "F:/Program Files (x86)/ADS2026",
+    "python_exe": "F:/Program Files (x86)/ADS2026/tools/python/python.exe"
+  },
+  
+  "project": {
+    "_comment": "你的 ADS 项目信息 - 留空则使用当前打开的工作空间",
+    "workspace": "",
+    "library": "",
+    "design": ""
+  },
+  
+  "llm": {
+    "_comment": "LLM 配置 - 不使用则设为 false",
+    "enabled": false,
+    "api_url": "http://localhost:11434/api/generate",
+    "model": "qwen2.5:14b"
+  },
+  
+  "output": {
+    "_comment": "结果输出设置",
+    "dir": "./results",
+    "save_plots": true
+  }
+}
