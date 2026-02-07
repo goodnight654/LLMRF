@@ -5,16 +5,18 @@
 自动生成滤波器设计并进行ADS仿真
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import json
 import pandas as pd
 from pathlib import Path
-from typing import Dict, List
 import time
+from typing import Dict, List, Any
 
 # 设置环境变量
-os.environ['HPEESOF_DIR'] = r"F:/Program Files (x86)/ADS2026"
+os.environ['HPEESOF_DIR'] = r"C:/Program Files/Keysight/ADS2025_Update1"
 
 from filter_designer import FilterDatasetGenerator, ChebyshevFilterDesigner
 from ads_engine import ADSEngine
@@ -86,36 +88,35 @@ class FilterSimulationPipeline:
             print(f"  ✓ 使用现有库: {self.library_name}")
         
         return workspace, lib
-    
-    def create_filter_schematic(self, lib: de.Library, design: Dict) -> de.Design:
-        """
-        在ADS中创建滤波器原理图
-        
+
+    def create_filter_schematic(self, lib: de.Library, design: Dict) -> Any:
+        """在 ADS 中创建滤波器原理图。
+
         Args:
-            lib: ADS库对象
+            lib: ADS 库对象（当前函数内不直接使用，仅用于调用侧语义清晰）
             design: 设计字典
-            
+
         Returns:
-            de.Design: 设计对象
+            Any: ADS schematic 设计实例
         """
         from keysight.ads.de import db_uu as db
-        
+
         design_id = design['id']
-        L = design['L']
         C = design['C']
-        fc = design['params']['fc']
         fs = design['params']['fs']
-        
+        L = design['L']
+
         # 创建原理图
         cell_name = f"{design_id}_schematic"
+        design["cell_name"] = cell_name
         sch_design = db.create_schematic(f"{self.library_name}:{cell_name}:schematic")
-        
+
         # 添加变量
         var_inst = sch_design.add_instance(
-            ("ads_datacmps", "VAR", "symbol"), 
-            (3.5, -2.75), 
-            name="VAR1", 
-            angle=-90
+            ("ads_datacmps", "VAR", "symbol"),
+            (3.5, -2.75),
+            name="VAR1",
+            angle=-90,
         )
         
         # 添加电感
@@ -124,8 +125,7 @@ class FilterSimulationPipeline:
             ind.parameters["L"].value = f"L{i + 1} nH"
             ind.update_item_annotation()
             var_inst.vars[f"L{i + 1}"] = f"{l_val}"
-            if i < len(L) - 1:
-                sch_design.add_wire([(i * 2 + 1, 0), (i * 2 + 2, 0)])
+            sch_design.add_wire([(i * 2 + 1, 0), (i * 2 + 2, 0)])
         
         # 添加电容
         for i, c_val in enumerate(C):
@@ -221,35 +221,44 @@ class FilterSimulationPipeline:
                 
                 # 提取结果
                 from keysight.ads import dataset
-                ds_path = os.path.join(sim_output_dir, f"{sch_design.name}.ds")
-                
-                if os.path.exists(ds_path):
-                    output_data = dataset.open(Path(ds_path))
-                    
-                    # 提取S参数数据
-                    for block_name in output_data.varblock_names:
-                        if 'SP' in block_name.upper():
-                            df = output_data[block_name].to_dataframe().reset_index()
-                            
-                            # 保存数据
-                            csv_path = os.path.join(sim_output_dir, f"{block_name}.csv")
-                            df.to_csv(csv_path, index=False)
-                            
-                            # 计算性能指标
-                            metrics = self.calculate_metrics(df, design)
-                            
-                            result = {
-                                'design_id': design_id,
-                                'design': design,
-                                'metrics': metrics,
-                                'data_path': csv_path
-                            }
-                            results.append(result)
-                            
-                            print(f"    ✓ 指标提取完成")
-                            print(f"      - S11_max: {metrics['S11_max_dB']:.2f} dB")
-                            print(f"      - S21_min: {metrics['S21_passband_min_dB']:.2f} dB")
-                            break
+                cell_name = design.get("cell_name", f"{design_id}_schematic")
+                ds_path = os.path.join(sim_output_dir, f"{cell_name}.ds")
+
+                if not os.path.exists(ds_path):
+                    # 兼容 ADS 可能生成不同名称的 ds 文件
+                    ds_candidates = list(Path(sim_output_dir).glob("*.ds"))
+                    if ds_candidates:
+                        ds_path = str(ds_candidates[0])
+                        print(f"    ℹ 未找到预期数据集，改用: {ds_path}")
+                    else:
+                        raise FileNotFoundError(f"未找到 .ds 数据集文件: {sim_output_dir}")
+
+                output_data = dataset.open(Path(ds_path))
+
+                # 提取S参数数据
+                for block_name in output_data.varblock_names:
+                    if 'SP' in block_name.upper():
+                        df = output_data[block_name].to_dataframe().reset_index()
+
+                        # 保存数据
+                        csv_path = os.path.join(sim_output_dir, f"{block_name}.csv")
+                        df.to_csv(csv_path, index=False)
+
+                        # 计算性能指标
+                        metrics = self.calculate_metrics(df, design)
+
+                        result = {
+                            'design_id': design_id,
+                            'design': design,
+                            'metrics': metrics,
+                            'data_path': csv_path
+                        }
+                        results.append(result)
+
+                        print(f"    ✓ 指标提取完成")
+                        print(f"      - S11_max: {metrics['S11_max_dB']:.2f} dB")
+                        print(f"      - S21_min: {metrics['S21_passband_min_dB']:.2f} dB")
+                        break
                 
             except Exception as e:
                 print(f"    ✗ 仿真失败: {e}")
@@ -343,9 +352,9 @@ def main_quick_test():
     print("="*70)
     
     pipeline = FilterSimulationPipeline(
-        workspace_path=r"D:\Desktop\sjtu\LLMRF\filter_test_wrk",
+        workspace_path=r"G:\wenlong\ADS\test_Filter",
         library_name="filter_test_lib",
-        output_dir=r"D:\Desktop\sjtu\LLMRF\filter_test_results"
+        output_dir=r"G:\wenlong\ADS\test_Filter\results"
     )
     
     # 生成3个测试设计
@@ -367,9 +376,9 @@ def main_dataset_generation():
     print("="*70)
     
     pipeline = FilterSimulationPipeline(
-        workspace_path=r"D:\Desktop\sjtu\LLMRF\filter_dataset_wrk",
+        workspace_path=r"G:\wenlong\ADS\filter_dataset_wrk",
         library_name="filter_dataset_lib",
-        output_dir=r"D:\Desktop\sjtu\LLMRF\filter_dataset_results"
+        output_dir=r"G:\wenlong\ADS\filter_dataset_results"
     )
     
     # 生成网格化数据集

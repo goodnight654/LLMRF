@@ -3,8 +3,8 @@
   
   "ads": {
     "_comment": "修改为你的 ADS 安装路径",
-    "install_path": "F:/Program Files (x86)/ADS2026",
-    "python_exe": "F:/Program Files (x86)/ADS2026/tools/python/python.exe"
+    "install_path": "C:/Program Files/Keysight/ADS2025_Update1",
+    "python_exe": "C:/Program Files/Keysight/ADS2025_Update1/tools/python/python.exe"
   },
   
   "project": {

@@ -1,36 +1,26 @@
-"""
-LLM 接口模块
-
-用于连接大语言模型（本地或 API）
-实现射频电路设计的智能辅助功能
-支持参数建议、优化策略生成等
-
-与 need.md 中的 LLM 项目对接
-"""
-
 import json
 import requests
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 import os
 
 
 class LLMInterface:
-    """LLM 接口类 - 支持本地和 API 调用"""
+    """LLM 接口类 - 支持本地和 API 调用（射频PA设计专项优化）"""
     
     def __init__(self, 
                  model_type: str = "local",
                  api_url: str = "http://localhost:11434/api/generate",
-                 model_name: str = "qwen2.5:14b",
+                 model_name: str = "qwen3:14b",
                  api_key: Optional[str] = None,
                  verbose: bool = True):
         """
         初始化 LLM 接口
         
         Args:
-            model_type: 模型类型 ("local" 或 "openai")
-            api_url: API 地址（本地 Ollama 或 vLLM）
+            model_type: 模型类型 ("local", "openai")
+            api_url: API 地址
             model_name: 模型名称
-            api_key: API 密钥（用于 OpenAI 等）
+            api_key: API 密钥
             verbose: 是否输出详细日志
         """
         self.model_type = model_type
@@ -39,33 +29,42 @@ class LLMInterface:
         self.api_key = api_key
         self.verbose = verbose
         
-        # 系统提示词 - 射频电路设计专家
-        self.system_prompt = """你是一个射频电路设计专家，特别擅长功率放大器（PA）设计。
-你理解电路网表（Netlist）格式、SPICE 模型参数、S 参数、谐波平衡仿真等概念。
-你可以根据设计目标（如增益、效率、带宽）给出优化建议和参数调整方向。
+        # 系统提示词 - 射频PA设计专家
+        # 重点强调单位规范和输出格式要求，确保LLM输出符合工程实际需求
+        self.system_prompt = """# 射频功率放大器(PA)设计专家系统
+## 专业领域
+- 电路网表(Netlist)与SPICE模型(BSIM/MOSFET)
+- S参数分析(S11/S21)、谐波平衡仿真、负载牵引
+- PA核心指标：增益(dB)、功率附加效率(PAE%)、线性度(ACPR)、输出功率(dBm)
+- 匹配网络设计(LC/微带线)、热管理、稳定性分析
 
-请用专业、简洁的语言回答，给出具体的数值建议。"""
+## 输出规则（必须严格遵守）
+1. **数值单位**：所有参数必须使用国际单位制(SI)
+    - 电容：法拉(F) -> 1.5pF = 1.5e-12
+    - 电感：亨利(H) -> 8nH = 8.0e-9
+    - 电阻：欧姆(Ohm)
+2. **JSON格式**：
+   - 初始参数：{"C1": 1.5e-12, "L1": 8.0e-9} （纯数值，无单位字符串）
+   - 优化策略：{"C1": "increase", "L1": "decrease"} （仅限"increase"/"decrease"）
+3. **禁止行为**：
+   - 输出注释/说明文字（JSON必须可直接解析）
+    - 模糊表述（"适当调整" -> "C1从1.2e-12增至1.5e-12"）
+    - 单位缺失或错误（1.5 != 1.5e-12）
+
+## 示例
+ 正确：{"C1": 1.5e-12}
+ 错误：{"C1": "1.5pF"} / {"C1": 1.5} / {"C1": "increase slightly"}
+"""
         
         self._log(f"LLM 接口已初始化: {model_type} - {model_name}")
     
     def _log(self, message: str, level: str = "INFO"):
         """内部日志"""
         if self.verbose:
-            prefix = {"INFO": "ℹ", "SUCCESS": "✓", "ERROR": "✗", "WARNING": "⚠"}.get(level, "•")
-            print(f"{prefix} {message}")
+            prefix = {"INFO": "INFO", "SUCCESS": "SUCCESS", "ERROR": "ERROR", "WARNING": "WARNING"}.get(level, "INFO")
+            print(f"{prefix}: {message}")
     
     def call(self, prompt: str, temperature: float = 0.7, max_tokens: int = 1000) -> Optional[str]:
-        """
-        调用 LLM
-        
-        Args:
-            prompt: 用户提示词
-            temperature: 温度参数（控制随机性）
-            max_tokens: 最大生成长度
-            
-        Returns:
-            str: LLM 的回复，失败返回 None
-        """
         try:
             if self.model_type == "local":
                 return self._call_local(prompt, temperature, max_tokens)
@@ -79,22 +78,9 @@ class LLMInterface:
             return None
     
     def _call_local(self, prompt: str, temperature: float, max_tokens: int) -> Optional[str]:
-        """
-        调用本地 LLM（Ollama 或 vLLM）
-        
-        Ollama API 格式：
-            POST /api/generate
-            {
-                "model": "qwen2.5:14b",
-                "prompt": "...",
-                "stream": false
-            }
-        """
         try:
-            # 构建完整提示词
             full_prompt = f"{self.system_prompt}\n\n用户问题：{prompt}"
             
-            # 准备请求
             payload = {
                 "model": self.model_name,
                 "prompt": full_prompt,
@@ -106,13 +92,7 @@ class LLMInterface:
             }
             
             self._log(f"调用本地 LLM: {self.api_url}")
-            
-            # 发送请求
-            response = requests.post(
-                self.api_url,
-                json=payload,
-                timeout=120
-            )
+            response = requests.post(self.api_url, json=payload, timeout=120)
             
             if response.status_code == 200:
                 result = response.json()
@@ -128,13 +108,8 @@ class LLMInterface:
             return None
     
     def _call_openai(self, prompt: str, temperature: float, max_tokens: int) -> Optional[str]:
-        """
-        调用 OpenAI 兼容 API
-        """
         try:
-            headers = {
-                "Content-Type": "application/json",
-            }
+            headers = {"Content-Type": "application/json"}
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
             
@@ -148,12 +123,7 @@ class LLMInterface:
                 "max_tokens": max_tokens
             }
             
-            response = requests.post(
-                self.api_url,
-                headers=headers,
-                json=payload,
-                timeout=120
-            )
+            response = requests.post(self.api_url, headers=headers, json=payload, timeout=120)
             
             if response.status_code == 200:
                 result = response.json()
@@ -171,61 +141,61 @@ class LLMInterface:
     def suggest_initial_parameters(self, 
                                   design_spec: Dict[str, Any],
                                   variables: List[Dict]) -> Optional[Dict[str, float]]:
+        """建议初始参数（严格使用SI单位）
         """
-        根据设计指标建议初始参数
-        
-        Args:
-            design_spec: 设计规格，如 {
-                'type': 'PA',
-                'frequency': 2.4e9,
-                'target_gain': 15,
-                'target_pae': 50
-            }
-            variables: 可调变量列表
-            
-        Returns:
-            dict: 参数建议 {变量名: 建议值}
-        """
-        # 构建提示词
-        prompt = f"""
-设计目标：
-{json.dumps(design_spec, indent=2, ensure_ascii=False)}
+        # 【关键优化】明确单位标准 + 数值格式约束
+        prompt = f"""## 设计目标
 
-可调参数列表：
+## 【重要】单位规范
+所有参数值必须使用国际单位制(SI)：
+
+## 可调参数（当前值 -> 范围）
 """
         for var in variables:
-            prompt += f"- {var['name']} ({var['param']}): 范围 [{var['min']}, {var['max']}], 当前 {var['value']}\n"
+            # 安全获取单位（兼容旧数据结构）
+            unit = var.get('unit', 'SI')
+            prompt += f"- {var['name']} ({var['param']}): {var['value']:.2e} {unit} -> [{var['min']:.2e}, {var['max']:.2e}] {unit}\n"
         
         prompt += """
-请根据设计目标，建议每个参数的初始值。只需要给出参数名和建议值，格式如下：
-{
-    "C1": 1.5e-12,
-    "L1": 8.0e-9,
-    ...
-}
+## 输出要求
+仅输出纯JSON（无任何注释/说明文字），格式：
+{"参数名": 目标值（SI单位数值）}
+
+示例：
+{"C1": 1.5e-12, "L1": 8.0e-9}
 """
         
-        self._log("请求 LLM 建议初始参数...")
+        self._log("请求 LLM 建议初始参数（SI单位制）...")
         response = self.call(prompt, temperature=0.3)
         
         if not response:
             return None
         
-        # 尝试从响应中提取 JSON
+        # 增强JSON提取（处理可能的markdown代码块）
         try:
-            # 查找 JSON 部分
-            start = response.find('{')
-            end = response.rfind('}') + 1
-            if start >= 0 and end > start:
-                json_str = response[start:end]
-                suggestions = json.loads(json_str)
-                self._log(f"成功解析参数建议: {len(suggestions)} 个", "SUCCESS")
-                return suggestions
+            # 处理 ```json ... ``` 包裹的情况
+            if "```" in response:
+                json_str = response.split("```")[1].strip()
+                if json_str.startswith("json"):
+                    json_str = json_str[4:].strip()
             else:
-                self._log("无法从响应中提取 JSON", "WARNING")
-                return None
+                start = response.find('{')
+                end = response.rfind('}') + 1
+                json_str = response[start:end] if start >= 0 and end > start else response
+            
+            suggestions = json.loads(json_str)
+            # 验证数值类型
+            for k, v in suggestions.items():
+                if not isinstance(v, (int, float)):
+                    self._log(f"参数 {k} 值非数值类型: {v}", "WARNING")
+                    return None
+            self._log(f"成功解析 {len(suggestions)} 个参数建议（SI单位）", "SUCCESS")
+            return suggestions
+        except json.JSONDecodeError as e:
+            self._log(f"JSON解析失败: {e} | 原始响应: {response[:200]}", "ERROR")
+            return None
         except Exception as e:
-            self._log(f"解析 LLM 响应失败: {e}", "ERROR")
+            self._log(f"参数建议解析异常: {e}", "ERROR")
             return None
     
     def suggest_optimization_strategy(self,
@@ -233,129 +203,100 @@ class LLMInterface:
                                     target_results: Dict[str, float],
                                     variables: List[Dict]) -> Optional[Dict[str, str]]:
         """
-        根据当前结果和目标，建议优化策略
-        
-        Args:
-            current_results: 当前性能，如 {'gain': 12, 'pae': 35}
-            target_results: 目标性能，如 {'gain': 15, 'pae': 50}
-            variables: 可调变量列表
-            
-        Returns:
-            dict: 优化策略 {变量名: "增大" 或 "减小"}
+        建议优化策略（严格限定方向词）
         """
-        prompt = f"""
-当前性能：
-{json.dumps(current_results, indent=2, ensure_ascii=False)}
+        prompt = f"""## 性能对比（当前 -> 目标）
 
-目标性能：
-{json.dumps(target_results, indent=2, ensure_ascii=False)}
-
-可调参数：
+## 可调参数（当前值）
 """
         for var in variables:
-            prompt += f"- {var['name']} ({var['param']}): 当前 {var['value']}\n"
+            unit = var.get('unit', 'SI')
+            prompt += f"- {var['name']} ({var['param']}): {var['value']:.2e} {unit}\n"
         
         prompt += """
-请分析当前性能与目标的差距，建议每个参数应该增大还是减小。
-格式：
-{
-    "C1": "increase",
-    "L1": "decrease",
-    ...
-}
+## 输出要求
+仅输出纯JSON（无任何额外文字），键为参数名，值严格限定为：
+
+示例：
+{"C1": "increase", "L1": "decrease"}
 """
         
         self._log("请求 LLM 建议优化策略...")
-        response = self.call(prompt, temperature=0.3)
+        response = self.call(prompt, temperature=0.2)  # 降低温度提升确定性
         
         if not response:
             return None
         
         try:
-            start = response.find('{')
-            end = response.rfind('}') + 1
-            if start >= 0 and end > start:
-                json_str = response[start:end]
-                strategy = json.loads(json_str)
-                self._log(f"成功解析优化策略", "SUCCESS")
-                return strategy
+            if "```" in response:
+                json_str = response.split("```")[1].strip()
+                if json_str.startswith("json"):
+                    json_str = json_str[4:].strip()
             else:
-                return None
+                start = response.find('{')
+                end = response.rfind('}') + 1
+                json_str = response[start:end] if start >= 0 and end > start else response
+            
+            strategy = json.loads(json_str)
+            # 验证值有效性
+            valid_vals = {"increase", "decrease"}
+            for k, v in strategy.items():
+                if v not in valid_vals:
+                    self._log(f"策略 {k} 值无效: '{v}'（应为increase/decrease）", "WARNING")
+                    return None
+            self._log(f"成功解析优化策略（{len(strategy)}个参数）", "SUCCESS")
+            return strategy
         except Exception as e:
-            self._log(f"解析优化策略失败: {e}", "ERROR")
+            self._log(f"策略解析失败: {e} | 响应: {response[:150]}", "ERROR")
             return None
     
     def analyze_simulation_results(self, results: Dict[str, Any]) -> Optional[str]:
         """
-        分析仿真结果，给出专业评价
-        
-        Args:
-            results: 仿真结果字典
-            
-        Returns:
-            str: 分析报告
+        分析仿真结果（专业报告格式）
         """
-        prompt = f"""
-以下是 ADS 仿真结果：
-{json.dumps(results, indent=2, ensure_ascii=False)}
+        # 格式化结果（增强可读性）
+        formatted = []
+        for k, v in results.items():
+            if k.endswith('_db'):
+                formatted.append(f"{k.replace('_db','').upper()}: {v:.1f} dB")
+            elif k == 'pae':
+                formatted.append(f"PAE: {v:.1f}%")
+            elif k == 'frequency':
+                formatted.append(f"Frequency: {v/1e9:.2f} GHz")
+            else:
+                formatted.append(f"{k}: {v}")
+        
+        prompt = f"""## 仿真结果
+{chr(10).join(formatted)}
 
-请分析这些结果，指出：
-1. 设计的优势
-2. 可能存在的问题
-3. 改进建议
+## 分析要求
+用专业射频工程师语言，分三部分：
+1. 【优势】突出达标指标（带具体数值）
+2. 【问题】指出关键差距（量化影响，如"增益缺口0.5dB导致输出功率不足"）
+3. 【建议】给出可执行调整（参数名+调整方向+目标值，例："C1从1.2e-12F增至1.5e-12F"）
 
-请用简洁专业的语言回答。
+## 禁止
 """
         
         self._log("请求 LLM 分析仿真结果...")
         response = self.call(prompt, temperature=0.5, max_tokens=1500)
         
         if response:
-            self._log("分析完成", "SUCCESS")
-        
+            self._log("仿真分析完成", "SUCCESS")
         return response
 
 
-class MockLLMInterface(LLMInterface):
-    """
-    Mock LLM 接口 - 用于测试
-    不需要真实的 LLM 服务
-    """
-    
-    def __init__(self, verbose: bool = True):
-        super().__init__(model_type="mock", verbose=verbose)
-        self._log("Mock LLM 接口已初始化（测试模式）")
-    
-    def call(self, prompt: str, temperature: float = 0.7, max_tokens: int = 1000) -> str:
-        """返回模拟响应"""
-        self._log("Mock LLM 调用（返回模拟数据）")
-        
-        if "初始参数" in prompt or "initial" in prompt.lower():
-            return """{
-    "C1": 1.5e-12,
-    "L1": 8.0e-9,
-    "C2": 2.0e-12
-}"""
-        elif "优化策略" in prompt or "strategy" in prompt.lower():
-            return """{
-    "C1": "increase",
-    "L1": "decrease"
-}"""
-        else:
-            return "这是一个模拟的 LLM 响应。设计看起来合理，建议微调匹配网络参数以提高效率。"
-
-
-# 测试代码
+# ==================== 测试代码 ====================
 if __name__ == "__main__":
-    print("=" * 60)
-    print("LLM 接口模块测试")
-    print("=" * 60)
-    
-    # 使用 Mock 接口进行测试
-    llm = MockLLMInterface(verbose=True)
-    
-    # 测试 1: 建议初始参数
-    print("\n测试 1: 建议初始参数")
+    print("=" * 70)
+    llm = LLMInterface(
+        model_type="local",
+        model_name="qwen3:14b",
+        verbose=True
+    )
+
+    # 测试1: 建议初始参数（含单位字段）
+    print("\n【测试1】建议初始参数（SI单位制验证）")
     design_spec = {
         'type': 'PA',
         'frequency': 2.4e9,
@@ -363,26 +304,32 @@ if __name__ == "__main__":
         'target_pae': 50
     }
     variables = [
-        {'name': 'C1', 'param': 'C', 'value': 1.0e-12, 'min': 0.5e-12, 'max': 5e-12},
-        {'name': 'L1', 'param': 'L', 'value': 10e-9, 'min': 5e-9, 'max': 20e-9}
+        {'name': 'C1', 'param': 'C', 'value': 1.0e-12, 'min': 0.5e-12, 'max': 5e-12, 'unit': 'F'},
+        {'name': 'L1', 'param': 'L', 'value': 10e-9, 'min': 5e-9, 'max': 20e-9, 'unit': 'H'},
+        {'name': 'Rbias', 'param': 'R', 'value': 100, 'min': 50, 'max': 200, 'unit': 'Ohm'}
     ]
     suggestions = llm.suggest_initial_parameters(design_spec, variables)
     print(f"参数建议: {suggestions}")
+    if suggestions and all(isinstance(v, (int, float)) for v in suggestions.values()):
+        print("   验证：所有值均为数值类型（SI单位）")
     
-    # 测试 2: 建议优化策略
-    print("\n测试 2: 建议优化策略")
-    current = {'gain': 12, 'pae': 35}
-    target = {'gain': 15, 'pae': 50}
+    # 测试2: 优化策略
+    print("\n【测试2】优化策略（方向词验证）")
+    current = {'gain': 12.3, 'pae': 35.7}
+    target = {'gain': 15.0, 'pae': 50.0}
     strategy = llm.suggest_optimization_strategy(current, target, variables)
     print(f"优化策略: {strategy}")
+    if strategy and all(v in ["increase", "decrease"] for v in strategy.values()):
+        print("   验证：所有策略值为有效方向词")
     
-    # 测试 3: 分析结果
-    print("\n测试 3: 分析仿真结果")
-    results = {'gain': 14.5, 'pae': 48, 's11_db': -15}
+    # 测试3: 仿真分析
+    print("\n【测试3】仿真结果分析")
+    results = {
+        'gain': 14.5, 
+        'pae': 48.2, 
+        's11_db': -15.3,
+        'frequency': 2.4e9
+    }
     analysis = llm.analyze_simulation_results(results)
     print(f"分析报告:\n{analysis}")
-    
-    print("\n" + "=" * 60)
-    print("提示：使用真实 LLM 需要启动 Ollama 或 vLLM 服务")
-    print("例如：ollama run qwen2.5:14b")
-    print("=" * 60)
+    print("=" * 70)

@@ -9,9 +9,9 @@ from pathlib import Path
 import numpy as np
  
  
-workspace_path = "C:/ADS_Python_Tutorials/tutorial4_wrk"
-cell_name = "python_schematic"
-library_name = "tutorial4_lib"
+workspace_path = r"G:\wenlong\ADS\test_wrk"
+cell_name = "test"
+library_name = "test_lib"
  
  
 def create_and_open_an_empty_workspace(workspace_path: str):
@@ -48,24 +48,24 @@ def create_a_library_and_add_it_to_the_workspace(workspace: de.Workspace):
 
 ws = create_and_open_an_empty_workspace(workspace_path)
 # 使用工作空间的指针创建并添加库到空工作空间
-        cap.parameters["C"].value = f"C{i + 1} pF"
-        cap.update_item_annotation()
-        design.add_wire([(i * 2 + 1.5, 0), (i * 2 + 1.5, -1)])
-        design.add_instance("ads_rflib:GROUND:symbol", (i * 2 + 1.5, -2), angle=-90)
+cap.parameters["C"].value = f"C{i + 1} pF"
+cap.update_item_annotation()
+design.add_wire([(i * 2 + 1.5, 0), (i * 2 + 1.5, -1)])
+design.add_instance("ads_rflib:GROUND:symbol", (i * 2 + 1.5, -2), angle=-90)
  
-    design.add_instance("ads_simulation:TermG:symbol", (-1, -1), angle=-90)
-    design.add_instance("ads_simulation:TermG:symbol", (10, -1), angle=-90)
+design.add_instance("ads_simulation:TermG:symbol", (-1, -1), angle=-90)
+design.add_instance("ads_simulation:TermG:symbol", (10, -1), angle=-90)
  
-    design.add_wire([(-1, -1), (-1, 0), (0, 0)])
-    design.add_wire([(10, -1), (10, 0)])
+design.add_wire([(-1, -1), (-1, 0), (0, 0)])
+design.add_wire([(10, -1), (10, 0)])
  
-    sp = design.add_instance("ads_simulation:S_Param:symbol", (0, 2))
-    sp.parameters["Start"].value = "0.01 GHz"
-    sp.parameters["Stop"].value = "0.5 GHz"
-    sp.parameters["Step"].value = "0.001 GHz"
-    sp.update_item_annotation()
-    design.save_design()
-    return design
+sp = design.add_instance("ads_simulation:S_Param:symbol", (0, 2))
+sp.parameters["Start"].value = "0.01 GHz"
+sp.parameters["Stop"].value = "0.5 GHz"
+sp.parameters["Step"].value = "0.001 GHz"
+sp.update_item_annotation()
+design.save_design()
+
  
  
 # 使用lib对象/指针创建原理图

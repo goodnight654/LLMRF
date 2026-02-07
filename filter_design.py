@@ -1,12 +1,36 @@
 import os
+import sys
+import warnings
+warnings.filterwarnings("ignore")
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 from IPython.core import getipython
  
+# 配置 ADS 环境
+if "HPEESOF_DIR" not in os.environ:
+    # 尝试自动设置，这里假设是之前配置中的路径
+    os.environ["HPEESOF_DIR"] = r"C:\Program Files\Keysight\ADS2025_Update1"
+
+hpeesof_dir = os.environ["HPEESOF_DIR"]
+bin_path = os.path.join(hpeesof_dir, "bin")
+
+if bin_path not in os.environ["PATH"]:
+    os.environ["PATH"] = bin_path + os.pathsep + os.environ["PATH"]
+ 
 from keysight.ads import de
 from keysight.ads.de import db_uu as db
-from keysight.edatoolbox import ads
+
+try:
+    from keysight.edatoolbox import ads
+except ImportError:
+    # 尝试从 ADS 安装目录加载
+    print("Warning: keysight.edatoolbox not found, attempting to load from ADS directory...")
+    ads_site_packages = r"C:\Program Files\Keysight\ADS2025_Update1\tools\python\Lib\site-packages"
+    if os.path.exists(ads_site_packages) and ads_site_packages not in sys.path:
+        sys.path.append(ads_site_packages)
+    from keysight.edatoolbox import ads
+
 import keysight.ads.dataset as dataset
  
  
@@ -16,9 +40,9 @@ fs = 1500e6  # 阻带频率(Hz)
 R0 = 50  # 滤波器的参考阻抗
 La = 40  # fs频率处所需的衰减(dB)
  
-workspace_path = "C:/ADS_Python_Tutorials/tutorial5_wrk"
-cell_name = "python_filter_schematic"
-library_name = "tutorial5_lib"
+workspace_path = r"G:\wenlong\ADS\test_Filter"
+cell_name = "test"
+library_name = "test_lib"
  
  
 # Chebyshev低通滤波器设计器
@@ -80,8 +104,19 @@ def create_and_open_an_empty_workspace(workspace_path: str):
  
     # 如果目录已存在，则无法创建工作空间
     if os.path.exists(workspace_path):
-        raise RuntimeError(f"Workspace directory already exists: {workspace_path}")
- 
+        print(f"工作空间目录已存在: {workspace_path}，尝试清理...")
+        import shutil
+        try:
+            shutil.rmtree(workspace_path)
+            print("清理成功")
+        except Exception as e:
+            print(f"清理失败: {e}")
+            # 尝试直接打开
+            # return de.open_workspace(workspace_path) # 如果支持的话
+            # 暂时仍抛出异常或根据情况处理
+            # raise RuntimeError(f"Workspace directory already exists: {workspace_path}")
+            pass
+
     # 创建工作空间
     workspace = de.create_workspace(workspace_path)
     # 打开工作空间
@@ -107,6 +142,8 @@ def create_a_library_and_add_it_to_the_workspace(workspace: de.Workspace):
 
 
 ws = create_and_open_an_empty_workspace(workspace_path)
+lib = create_a_library_and_add_it_to_the_workspace(ws)
+
 # 使用工作空间的指针创建并添加库到空工作空间
 def create_schematic(library: de.Library):
     design = db.create_schematic(f"{library_name}:{cell_name}:schematic")
@@ -148,9 +185,6 @@ def create_schematic(library: de.Library):
  
  
 # Create schematic with the lib object/pointer
-design = create_schematic(lib)
- 
-ne使用lib对象/指针创建原理图
 design = create_schematic(lib)
  
 netlist = design.generate_netlist()

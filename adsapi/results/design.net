@@ -32,8 +32,8 @@ PP1020_CornerRES=0
 PP1020_CornerCAP=0
 PP1020_Met2T=2 um
 PP1020_Thickness=50 um
-#include "F:/DDDDDDDDDDDDDD/WIN/PP10-20/202409/WIN_PP10_20_DESIGN_KIT//circuit/models/common.net"
-#include "F:/DDDDDDDDDDDDDD/WIN/PP10-20/202409/WIN_PP10_20_DESIGN_KIT//circuit/models/techonology.net"
+#include "C:/CAD/WIN/PP10-20/202501/WIN_PP10_20_DESIGN_KIT//circuit/models/common.net"
+#include "C:/CAD/WIN/PP10-20/202501/WIN_PP10_20_DESIGN_KIT//circuit/models/techonology.net"
 S_Param:SP1 CalcS=yes CalcY=no CalcZ=no GroupDelayAperture=1e-4 FreqConversion=no FreqConversionPort=1 StatusLevel=2 CalcNoise=no SortNoise=0 BandwidthForNoise=1.0 Hz DevOpPtLevel=0 SPSS_WSP=yes \
 SweepVar="freq" SweepPlan="SP1_stim" OutputPlan="SP1_Output" 
 

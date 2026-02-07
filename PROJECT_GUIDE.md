@@ -7,7 +7,7 @@
 **目标**：从用户输入的性能指标，通过 LLM 推理生成电路参数，自动调用 ADS 仿真验证，形成完整的设计闭环。
 
 **硬件配置**：RTX 4090 (24GB VRAM)  
-**模型选择**：Qwen2.5-14B-Instruct (Int4/Int8 量化)
+**模型选择**：Qwen3-14B-Instruct (Int4/Int8 量化)
 
 ---
 
@@ -35,18 +35,18 @@ ADS Python API
 
 ### 1.1 已完成的模块
 
-✅ **ADS 自动化仿真接口** (`adsapi/`)
+ **ADS 自动化仿真接口** (`adsapi/`)
 - `ads_engine.py` - ADS 仿真引擎封装
 - `netlist_parser.py` - 网表解析
 - `visualizer.py` - 结果可视化
 - `post_processor.py` - 后处理（PAE, Gain, Efficiency 计算）
 
-✅ **滤波器设计模块** (`filter_designer.py`)
+ **滤波器设计模块** (`filter_designer.py`)
 - Chebyshev 低通滤波器自动设计
 - 批量生成滤波器设计
 - 网表自动生成
 
-✅ **批量仿真工具** (`batch_filter_simulation.py`)
+ **批量仿真工具** (`batch_filter_simulation.py`)
 - 集成设计器 + ADS 仿真
 - 自动提取 S 参数指标
 - 支持大规模数据集生成
@@ -105,13 +105,8 @@ filter_test_results/
 - 阻带比例: [1.5, 2.0, 2.5] (3个)
 - 衰减要求: [30, 40, 50] dB (3个)
 - **总计**: 3×4×3×3 = 108 个组合
-
-**预计时间**：每个设计约 30-60 秒，总共约 1.5-3 小时
-
 ### 1.3 数据集结构
-
 生成的数据集包含：
-
 ```json
 {
   "design_id": "filter_grid_0042",
@@ -256,7 +251,7 @@ python -m vllm.entrypoints.openai.api_server \
 llm = LLMInterface(
     model_type="local",
     api_url="http://localhost:11434/api/generate",  # Ollama
-    model_name="qwen2.5:14b"
+    model_name="qwen3:14b"
 )
 
 response = llm.generate_filter_design({
@@ -308,7 +303,7 @@ llamafactory-cli webui
 
 ### 4.1 PA 后处理已完成
 
-✅ `post_processor.py` 已实现：
+ `post_processor.py` 已实现：
 - 输出功率计算 (P_out_W, P_out_dBm)
 - 直流功耗计算 (P_dc_total)
 - 功率附加效率 (PAE)
@@ -401,7 +396,7 @@ ADS: 重新仿真
 
 ## 当前任务清单
 
-### ✅ 已完成
+###  已完成
 1. ADS 自动化仿真接口
 2. 滤波器设计器
 3. 批量仿真工具
