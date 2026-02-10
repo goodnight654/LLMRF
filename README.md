@@ -4,12 +4,12 @@
 - LLM（本地 Ollama）：用于参数建议/优化策略
 - ADS Python API：用于自动生成电路、运行仿真、提取指标与可视化
 
-## 📌 项目进度与下一步
+## 项目进度与下一步
 
 请先阅读根目录文档：
 - `IMPLEMENTATION_STATUS.md`（进度总结 + 接下来每一步怎么做）
 
-## 🚀 快速开始（推荐入口）
+## 快速开始（推荐入口）
 
 ### 1) 先配置一次（唯一需要改的配置）
 
@@ -30,7 +30,7 @@ python run.py --workspace <工作空间路径> --library <库名> --design <设�
 python run.py --workspace D:\Desktop\test_wrk --library test_lib --design test
 ```
 
-## 🧩 目录结构（核心）
+## 目录结构（核心）
 
 ```
 LLMRF/
@@ -48,7 +48,7 @@ LLMRF/
     └── 项目文档.md           # adsapi 子系统详细文档
 ```
 
-## 📝 常见问题
+## 常见问题
 
 ### Q: 出现 "No module named 'keysight'" 错误
 **A**: 必须使用 ADS 自带的 Python 解释器；`run.py` 会从 `adsapi/config.json` 读取并使用该解释器。
@@ -59,7 +59,7 @@ LLMRF/
 ### Q: Qt 字体警告
 **A**: 一般可忽略，不影响仿真流程。
 
-## 📖 详细文档
+## 详细文档
 
 - `adsapi/项目文档.md`：ADS 自动化子系统说明
 - `PROJECT_GUIDE.md`：更完整的阶段指南与规划

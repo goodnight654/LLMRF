@@ -53,7 +53,8 @@ def lpf_design_by_Atten(ripple_db, fc, fs, R0, La):
     ws = 2 * pi * fs  # 角频阻带频率
  
     N = round(np.sqrt(np.arccosh((10 ** (La) - 1) / ep)) / np.arccosh(ws / wc)) - 1
- 
+    # N公式
+    # N = np.ceil( np.arccosh( np.sqrt( (10**(La/10) - 1) / ep ) ) / np.arccosh(ws / wc) )
     Atten = 0 - 10 * np.log10(1 + ep * np.cosh((N * np.arccosh(ws / wc))) ** 2)
     Atten = round(Atten, 2)
  

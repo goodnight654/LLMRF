@@ -67,7 +67,17 @@ class FilterSimulationPipeline:
             print(f"  ℹ 工作空间已存在，将使用现有工作空间")
             if de.workspace_is_open():
                 de.close_workspace()
-            workspace = de.open_workspace(self.workspace_path)
+
+            lib_defs = Path(self.workspace_path) / "lib.defs"
+            try:
+                if not lib_defs.exists():
+                    raise RuntimeError("Library definition file not found")
+                workspace = de.open_workspace(self.workspace_path)
+            except RuntimeError:
+                # 如果工作空间损坏/缺少 lib.defs，则重建
+                workspace = de.create_workspace(self.workspace_path)
+                workspace.open()
+                print(f"  ✓ 重新创建工作空间: {self.workspace_path}")
         else:
             # 创建新工作空间
             workspace = de.create_workspace(self.workspace_path)
@@ -374,13 +384,12 @@ def main_dataset_generation():
     print("="*70)
     print("大规模数据集生成")
     print("="*70)
-    
+    date_tag = time.strftime("%Y%m%d")
     pipeline = FilterSimulationPipeline(
-        workspace_path=r"G:\wenlong\ADS\filter_dataset_wrk",
-        library_name="filter_dataset_lib",
-        output_dir=r"G:\wenlong\ADS\filter_dataset_results"
+        workspace_path=rf"G:\wenlong\ADS\filter_dataset_wrk_{date_tag}",
+        library_name=f"filter_dataset_lib_{date_tag}",
+        output_dir=rf"G:\wenlong\ADS\filter_dataset_results_{date_tag}",
     )
-    
     # 生成网格化数据集
     specs = pipeline.generator.generate_grid_specs(
         ripple_values=[0.1, 0.5, 1.0],          # 3个波纹值
