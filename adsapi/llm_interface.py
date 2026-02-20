@@ -76,7 +76,7 @@ class LLMInterface:
         except Exception as e:
             self._log(f"LLM 调用失败: {e}", "ERROR")
             return None
-    
+
     def _call_local(self, prompt: str, temperature: float, max_tokens: int) -> Optional[str]:
         try:
             full_prompt = f"{self.system_prompt}\n\n用户问题：{prompt}"
@@ -284,6 +284,17 @@ class LLMInterface:
         if response:
             self._log("仿真分析完成", "SUCCESS")
         return response
+
+
+class MockLLMInterface(LLMInterface):
+    """用于测试的 Mock LLM 接口（不调用真实模型）"""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def call(self, prompt: str, temperature: float = 0.7, max_tokens: int = 1000) -> Optional[str]:
+        self._log("Mock LLM 已启用，返回空响应", "WARNING")
+        return None
 
 
 # ==================== 测试代码 ====================

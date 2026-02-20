@@ -18,12 +18,15 @@ class ChebyshevFilterDesigner:
         """初始化设计器"""
         self.design_history = []
     
-    def design_lpf_by_attenuation(self, 
-                                  ripple_db: float,
-                                  fc: float,
-                                  fs: float,
-                                  R0: float,
-                                  La: float) -> Dict:
+    def design_lpf_by_attenuation(
+        self,
+        ripple_db: float,
+        fc: float,
+        fs: float,
+        R0: float,
+        La: float,
+        order: Optional[int] = None,
+    ) -> Dict:
         """
         根据所需衰减设计低通滤波器
         
@@ -43,7 +46,10 @@ class ChebyshevFilterDesigner:
         ws = 2 * pi * fs  # 角频阻带频率
         
         # 计算滤波器阶数
-        N = round(np.sqrt(np.arccosh((10 ** (La / 10) - 1) / ep)) / np.arccosh(ws / wc)) - 1
+        if order is None:
+            N = round(np.sqrt(np.arccosh((10 ** (La / 10) - 1) / ep)) / np.arccosh(ws / wc)) - 1
+        else:
+            N = int(order)
         
         # 计算实际衰减
         Atten = -10 * np.log10(1 + ep * np.cosh((N * np.arccosh(ws / wc))) ** 2)
@@ -182,24 +188,108 @@ class ChebyshevFilterDesigner:
         return spec
 
 
+class ButterworthFilterDesigner:
+    """Butterworth 低通滤波器设计器"""
+
+    def __init__(self):
+        self.design_history = []
+
+    def design_lpf_by_attenuation(
+        self,
+        ripple_db: float,
+        fc: float,
+        fs: float,
+        R0: float,
+        La: float,
+        order: Optional[int] = None,
+    ) -> Dict:
+        pi = np.pi
+        wc = 2 * pi * fc
+        ws = 2 * pi * fs
+
+        # 计算滤波器阶数 (Butterworth)
+        if order is None:
+            N = int(
+                np.ceil(
+                    np.log10(10 ** (La / 10) - 1) / (2 * np.log10(ws / wc))
+                )
+            )
+        else:
+            N = int(order)
+
+        # 归一化 g 值
+        gk = [round(2 * np.sin((2 * k - 1) * pi / (2 * N)), 4) for k in range(1, N + 1)]
+
+        # 转换为实际元件值
+        L = []
+        C = []
+        for k in range(1, N + 1):
+            if k % 2 != 0:
+                L.append(round(((R0 * gk[k - 1] / wc) / 1e-9), 2))  # nH
+            else:
+                C.append(round((gk[k - 1] / (R0 * wc)) / 1e-12, 2))  # pF
+
+        # 计算实际衰减
+        Atten = -10 * np.log10(1 + (ws / wc) ** (2 * N))
+        Atten = round(Atten, 2)
+
+        design = {
+            'L': L,
+            'C': C,
+            'N': N,
+            'Atten': Atten,
+            'gk': gk,
+            'params': {
+                'ripple_db': ripple_db,
+                'fc': fc,
+                'fs': fs,
+                'R0': R0,
+                'La_target': La,
+                'La_actual': Atten
+            }
+        }
+
+        self.design_history.append(design)
+        return design
+
+
+def get_filter_designer(filter_type: str):
+    """按类型返回滤波器设计器"""
+    ft = filter_type.lower().strip()
+    if ft == "chebyshev":
+        return ChebyshevFilterDesigner()
+    if ft == "butterworth":
+        return ButterworthFilterDesigner()
+    if ft == "elliptic":
+        raise ValueError("elliptic 暂未实现，请先使用 chebyshev 或 butterworth")
+    raise ValueError(f"不支持的滤波器类型: {filter_type}")
+
+
 class FilterDatasetGenerator:
     """滤波器数据集生成器"""
     
-    def __init__(self, output_dir: str = "./filter_dataset"):
+    def __init__(self, output_dir: str = "./filter_dataset", filter_type: str = "chebyshev"):
         """
         初始化数据集生成器
         
         Args:
             output_dir: 输出目录
         """
-        self.designer = ChebyshevFilterDesigner()
+        self.filter_type = filter_type
+        self.designer = get_filter_designer(filter_type)
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
         
         print(f"✓ 数据集生成器已初始化")
         print(f"  输出目录: {output_dir}")
     
-    def generate_random_specs(self, num_samples: int = 100) -> List[Dict]:
+    def generate_random_specs(
+        self,
+        num_samples: int = 100,
+        R0_values: Optional[List[float]] = None,
+        order_values: Optional[List[int]] = None,
+        filter_type: Optional[str] = None,
+    ) -> List[Dict]:
         """
         生成随机的滤波器规格
         
@@ -214,7 +304,7 @@ class FilterDatasetGenerator:
         # 定义参数范围
         ripple_range = [0.01, 0.05, 0.1, 0.5, 1.0]  # dB
         fc_range = np.linspace(500e6, 2e9, 20)      # 500MHz - 2GHz
-        R0 = 50  # 固定阻抗
+        R0_values = R0_values or [50]
         
         for i in range(num_samples):
             # 随机选择参数
@@ -228,23 +318,31 @@ class FilterDatasetGenerator:
             # 所需衰减在 30-60 dB之间
             La = np.random.uniform(30, 60)
             
-            specs.append({
+            spec = {
                 'id': f'filter_{i:04d}',
                 'ripple_db': ripple_db,
                 'fc': fc,
                 'fs': fs,
-                'R0': R0,
-                'La': La
-            })
+                'R0': float(np.random.choice(R0_values)),
+                'La': float(La),
+                'filter_type': (filter_type or self.filter_type)
+            }
+            if order_values:
+                spec['order'] = int(np.random.choice(order_values))
+            specs.append(spec)
         
         return specs
     
-    def generate_grid_specs(self, 
-                           ripple_values: List[float],
-                           fc_values: List[float],
-                           fs_ratios: List[float],
-                           La_values: List[float],
-                           R0: float = 50) -> List[Dict]:
+    def generate_grid_specs(
+        self,
+        ripple_values: List[float],
+        fc_values: List[float],
+        fs_ratios: List[float],
+        La_values: List[float],
+        R0_values: Optional[List[float]] = None,
+        order_values: Optional[List[int]] = None,
+        filter_type: Optional[str] = None,
+    ) -> List[Dict]:
         """
         生成网格化的规格（笛卡尔积）
         
@@ -261,20 +359,26 @@ class FilterDatasetGenerator:
         specs = []
         idx = 0
         
+        R0_values = R0_values or [50]
         for ripple in ripple_values:
             for fc in fc_values:
                 for fs_ratio in fs_ratios:
                     for La in La_values:
-                        fs = fc * fs_ratio
-                        specs.append({
-                            'id': f'filter_grid_{idx:04d}',
-                            'ripple_db': ripple,
-                            'fc': fc,
-                            'fs': fs,
-                            'R0': R0,
-                            'La': La
-                        })
-                        idx += 1
+                        for R0 in R0_values:
+                            fs = fc * fs_ratio
+                            spec = {
+                                'id': f'filter_grid_{idx:04d}',
+                                'ripple_db': ripple,
+                                'fc': fc,
+                                'fs': fs,
+                                'R0': R0,
+                                'La': La,
+                                'filter_type': (filter_type or self.filter_type)
+                            }
+                            if order_values:
+                                spec['order'] = order_values[idx % len(order_values)]
+                            specs.append(spec)
+                            idx += 1
         
         print(f"✓ 生成网格规格: {len(specs)} 个组合")
         return specs
@@ -295,16 +399,20 @@ class FilterDatasetGenerator:
         
         for i, spec in enumerate(specs):
             try:
+                filter_type = spec.get('filter_type', self.filter_type)
+                self.designer = get_filter_designer(filter_type)
                 design = self.designer.design_lpf_by_attenuation(
                     ripple_db=spec['ripple_db'],
                     fc=spec['fc'],
                     fs=spec['fs'],
                     R0=spec['R0'],
-                    La=spec['La']
+                    La=spec['La'],
+                    order=spec.get('order')
                 )
                 
                 # 添加ID
                 design['id'] = spec['id']
+                design['filter_type'] = filter_type
                 designs.append(design)
                 
                 if (i + 1) % 10 == 0:
