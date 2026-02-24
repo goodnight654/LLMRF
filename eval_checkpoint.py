@@ -21,7 +21,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 # ─── 默认路径 ──────────────────────────────────────────────────────────────────
 DEFAULT_BASE   = r"G:\wenlong\models\Qwen3-8B"
-DEFAULT_CKPT   = r"G:\wenlong\llmrf\LLaMA-Factory\saves\Qwen3-8B-Base\lora\train_q4_24g_safe\checkpoint-1200"
+DEFAULT_CKPT   = r"G:\wenlong\llmrf\LLaMA-Factory\saves\Qwen3-8B-Base\lora\train_cleaned_v2"
 DEFAULT_TEST   = r"G:\wenlong\llmrf\LLaMA-Factory\data\filter_sft_zhmix\test.jsonl"
 SYSTEM_PROMPT  = (
     "你是滤波器设计助手，支持低通(LPF)、高通(HPF)、带通(BPF)滤波器设计。"

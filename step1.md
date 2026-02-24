@@ -1,72 +1,39 @@
-﻿
----
+第一阶段：技术落地流程
+训练完成后，你需要将微调后的权重转化为可以被你的 llm_ads_loop_v2.py 调用的本地服务。
 
-### 第四阶段：模型导出与部署 (Merge -> GGUF -> Ollama)
+合并权重与导出 (Merge & Export)
+使用 LLaMA-Factory 的 export 功能，将训练得到的 LoRA 权重与 Qwen3-8B 基础模型合并，导出一个完整的 HuggingFace 格式模型。
+转换为 GGUF 格式 (Convert to GGUF)
+使用 llama.cpp 将合并后的模型量化并转换为 .gguf 格式。这一步是为了让模型能在 Ollama 中以极高的效率（和极低的显存占用）运行。
+部署到 Ollama (Deploy)
+编写一个简单的 Modelfile，将你的 GGUF 模型导入 Ollama（例如命名为 qwen3-8b-rf-agent）。
+闭环测试 (Closed-Loop Testing)
+运行我们之前写的 llm_ads_loop_v2.py。
+给定一个全新的滤波器指标（例如：设计一个中心频率 2.4GHz，带宽 200MHz 的切比雪夫带通滤波器），观察 Agent 是否能：生成网表 -> 调用 ADS 仿真 -> 读取 S 参数 -> 自主分析误差 -> 修改参数 -> 再次仿真，直到满足指标。
+第二阶段：文章/论文构思蓝图
+为了让你的工作具备学术价值或极高的技术含金量，文章可以围绕**“基于大语言模型的射频微波自动化设计闭环”**来写。以下是为你量身定制的三个核心创新点（对应你提到的三个方面）：
 
-以下是训练完成后，将 LoRA 权重合并、转换为 GGUF 格式，并最终导入 Ollama 的一键式命令清单。
-
-#### 1. 合并权重 (Merge LoRA)
-使用 LLaMA-Factory 将你训练好的 LoRA 权重与 Qwen3-8B 基础模型合并，导出一个完整的 HuggingFace 模型。
-在 `LLaMA-Factory` 目录下运行：
-
-`powershell
-llamafactory-cli export `
-  --model_name_or_path G:\wenlong\models\Qwen3-8B `
-  --adapter_name_or_path G:\wenlong\llmrf\LLaMA-Factory\saves\Qwen3-8B-Base\lora\train_q4_24g_safe `
-  --template qwen3_nothink `
-  --finetuning_type lora `
-  --export_dir G:\wenlong\models\Qwen3-8B-RF-Merged `
-  --export_size 2 `
-  --export_device cpu
-`
-*(注：`export_device cpu` 是为了防止显存溢出，合并过程会在内存中进行，可能需要几分钟)*
-
-#### 2. 转换为 GGUF 格式 (llama.cpp)
-**llama.cpp 介绍**：这是一个纯 C/C++ 实现的推理引擎，专门用于在普通硬件（CPU/GPU）上高效运行大语言模型。它定义了 `.gguf` 文件格式，这是目前 Ollama 底层依赖的核心格式。
-
-**步骤 2.1：克隆并安装 llama.cpp**
-打开一个新的终端，在你喜欢的目录（例如 `G:\wenlong`）下运行：
-`powershell
-git clone https://github.com/ggerganov/llama.cpp.git
-cd llama.cpp
-pip install -r requirements.txt
-`
-
-**步骤 2.2：将 HuggingFace 模型转换为 GGUF (FP16)**
-在 `llama.cpp` 目录下运行以下 Python 脚本，将刚才合并的模型转换为 16-bit 的 GGUF 格式：
-`powershell
-python convert_hf_to_gguf.py G:\wenlong\models\Qwen3-8B-RF-Merged --outfile G:\wenlong\models\Qwen3-8B-RF-Merged\qwen3-8b-rf-f16.gguf --outtype f16
-`
-
-**步骤 2.3：(可选但推荐) 量化为 4-bit GGUF**
-为了让模型在 Ollama 中运行得更快且占用极低显存（约 5-6GB），建议将其量化为 `q4_k_m` 格式。
-*(注意：Windows 下需要先编译 llama.cpp 才能得到 `llama-quantize.exe`。如果你不想编译，可以直接跳过这一步，Ollama 也支持直接导入 f16 格式，只是显存占用会大一些，约 16GB)*
-`powershell
-# 如果你编译了 llama.cpp，运行：
-.\llama-quantize.exe G:\wenlong\models\Qwen3-8B-RF-Merged\qwen3-8b-rf-f16.gguf G:\wenlong\models\Qwen3-8B-RF-Merged\qwen3-8b-rf-q4_k_m.gguf q4_k_m
-`
-
-#### 3. 导入 Ollama
-**步骤 3.1：创建 Modelfile**
-在 `G:\wenlong\models\Qwen3-8B-RF-Merged` 目录下，新建一个名为 `Modelfile` 的无后缀文本文件，填入以下内容：
-`	ext
-FROM ./qwen3-8b-rf-f16.gguf
-# 如果你做了量化，就把上面这行改成 FROM ./qwen3-8b-rf-q4_k_m.gguf
-
-TEMPLATE """{{ if .System }}<|im_start|>system
-{{ .System }}<|im_end|>
-{{ end }}{{ if .Prompt }}<|im_start|>user
-{{ .Prompt }}<|im_end|>
-{{ end }}<|im_start|>assistant
-"""
-PARAMETER stop "<|im_start|>"
-PARAMETER stop "<|im_end|>"
-`
-
-**步骤 3.2：构建并运行 Ollama 模型**
-在 `Modelfile` 所在的目录下打开终端，运行：
-`powershell
-ollama create qwen3-8b-rf -f Modelfile
-ollama run qwen3-8b-rf
-`
-如果成功进入对话界面，说明你的微调模型已经成功部署！接下来就可以在 `llm_ads_loop_v2.py` 中把 `MODEL_NAME` 改为 `"qwen3-8b-rf"` 进行闭环测试了。
+创新点 1：面向 EDA 垂直领域的指令微调数据集构建 (自构建训练集)
+痛点/背景：通用大模型（如 GPT-4, 通义千问）懂 Python 代码，但缺乏射频微波领域的专业直觉（如 S11/S21 的物理意义、电容电感值对谐振频率的非线性影响），且不懂如何调用特定 EDA 软件（ADS）的 API。
+你的创新：
+提出了一种**“状态-动作-反馈” (State-Action-Feedback)** 的数据构造范式。
+你的数据集不仅包含了“代码怎么写”，更包含了**“专家调参逻辑”**（例如：当 S11 在通带内大于 -10dB 时，应该如何微调匹配网络的电容）。
+填补了开源社区在“射频滤波器设计”这一垂直领域 LLM 训练数据的空白。
+创新点 2：低资源下的射频大模型高效微调 (微调大模型)
+痛点/背景：全量微调大模型成本极高，普通实验室或个人开发者难以承担。
+你的创新：
+验证了在消费级显卡（单张 RTX 4090 24G）上，基于 QLoRA (4-bit) 技术对 8B 级别模型进行微调的可行性。
+对比实验（消融实验）：在文章中，你可以对比 “未微调的 Qwen3-8B” 和 “微调后的 Qwen3-8B-RF”。
+预期结果：未微调的模型可能会乱写 ADS 网表或陷入死循环；而你的微调模型能够精准输出符合 ADS 语法的代码，并且 Token 命中率极高。
+创新点 3：基于反思机制的自动化滤波器设计 Agent (自动化滤波器设计Agent)
+痛点/背景：传统的自动化设计多采用遗传算法 (GA) 或粒子群算法 (PSO)，这些算法属于“黑盒”盲目搜索，收敛慢且容易陷入局部最优。
+你的创新：
+提出了一种具备物理直觉的 Agent 闭环架构。
+反思与自我修正 (Reflection & Self-Correction)：Agent 不是单次生成代码，而是能够读取 ADS 吐出的 .csv 结果（S参数），像人类工程师一样分析波形（“中心频率偏低了，我需要减小谐振电容”），并自主发起下一轮迭代。
+将滤波器设计从“人工试错 (Trial and Error)”升级为“AI 自主驱动 (Autonomous Driven)”。
+第三阶段：为了写文章，你现在需要收集什么数据？
+在接下来的测试中，请务必保留以下数据，这些都是文章中极好的图表素材：
+Loss 曲线：LLaMA-Factory 训练完成后的 training_loss 曲线图（证明模型收敛）。
+迭代对比图：记录 Agent 在设计一个滤波器时，第 1 次仿真、第 3 次仿真、第 5 次仿真的 S11/S21 曲线变化过程（证明 Agent 真的在“优化”）。
+Token 消耗与时间对比：记录 Agent 完成一个设计所需的平均轮数（比如平均 4 轮交互即可达标），对比传统优化算法所需的时间。
+Bad Case 分析：记录几次 Agent 失败的案例（比如参数调飞了），并在文章中分析原因，这会大大增加文章的真实性和学术严谨性。

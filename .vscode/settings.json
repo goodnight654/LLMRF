@@ -1,0 +1,9 @@
+{
+  "http.proxy": "http://127.0.0.1:7890",
+  "http.proxySupport": "on",
+  "http.proxyStrictSSL": false,
+  "http.systemCertificates": true,
+  "github.copilot.advanced": {
+    "debug.overrideProxyUrl": "http://127.0.0.1:7890"
+  }
+}

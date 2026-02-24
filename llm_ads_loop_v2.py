@@ -17,8 +17,6 @@ from typing import Any, Dict, List, Optional
 
 from adsapi.batch_filter_simulation import FilterSimulationPipeline
 
-
-# ======================== 配置区 ========================
 DEFAULT_WORKSPACE_ROOT = r"G:\wenlong\ADS"
 OUTPUT_ROOT = Path(__file__).parent / "llm_ads_outputs"
 
@@ -32,7 +30,6 @@ S11_TARGET_DB  = -10.0      # S11 通带目标 (dB)
 RIPPLE_TARGET_DB = 3.0      # 通带纹波目标 (dB)
 S21_MIN_TARGET_DB = -3.0    # S21 通带最小值目标 (dB, BPF)
 STOPBAND_TARGET_DB = -30.0  # 阻带 S21 抑制目标 (dB)
-# ========================================================
 
 # 各 filter_band 所需字段
 REQUIRED_FIELDS_LPF_HPF = ["filter_type", "filter_band", "ripple_db", "fc", "fs", "R0", "La_target", "order"]
