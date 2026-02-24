@@ -1,0 +1,18 @@
+{
+  "total_samples": 6171,
+  "train": 5553,
+  "val": 308,
+  "test": 310,
+  "stats": {
+    "total": 3400,
+    "reflection": 2771,
+    "evaluation_pass": 629,
+    "evaluation_fail": 2771,
+    "lpf": 3654,
+    "hpf": 1312,
+    "bpf": 1205,
+    "skipped": 0
+  },
+  "seed": 42,
+  "generated_at": "2026-02-24 03:45:26"
+}

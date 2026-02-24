@@ -5,7 +5,7 @@ import os
 
 
 class LLMInterface:
-    """LLM 接口类 - 支持本地和 API 调用（射频PA设计专项优化）"""
+    """LLM 接口类 - 支持本地和 API 调用"""
     
     def __init__(self, 
                  model_type: str = "local",

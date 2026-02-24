@@ -71,65 +71,117 @@ def simulate_single_design(args: Tuple[Dict, str, str]) -> Dict[str, Any]:
         # 创建原理图
         from keysight.ads.de import db_uu as db
         
-        C = design['C']
-        L = design['L']
-        fs = design['params']['fs']
-        
         cell_name = f"{design_id}_schematic"
         design["cell_name"] = cell_name
         sch_design = db.create_schematic(f"{library_name}:{cell_name}:schematic")
-        
-        # 添加变量
+
         var_inst = sch_design.add_instance(
             ("ads_datacmps", "VAR", "symbol"),
             (3.5, -2.75),
             name="VAR1",
             angle=-90,
         )
-        
-        # 添加电感
-        for i, l_val in enumerate(L):
-            ind = sch_design.add_instance("ads_rflib:L:symbol", (i * 2, 0))
-            ind.parameters["L"].value = f"L{i + 1} nH"
-            ind.update_item_annotation()
-            var_inst.vars[f"L{i + 1}"] = f"{l_val}"
-            sch_design.add_wire([(i * 2 + 1, 0), (i * 2 + 2, 0)])
-        
-        # 添加电容
-        for i, c_val in enumerate(C):
-            cap = sch_design.add_instance(
-                "ads_rflib:C:symbol", 
-                (i * 2 + 1.5, -1), 
-                angle=-90
-            )
-            cap.parameters["C"].value = f"C{i + 1} pF"
-            cap.update_item_annotation()
-            var_inst.vars[f"C{i + 1}"] = f"{c_val}"
-            sch_design.add_wire([(i * 2 + 1.5, 0), (i * 2 + 1.5, -1)])
-            sch_design.add_instance(
-                "ads_rflib:GROUND:symbol", 
-                (i * 2 + 1.5, -2), 
-                angle=-90
-            )
-        
+
+        filter_band = design.get('filter_band', 'lowpass')
+
+        if filter_band == 'highpass':
+            # ---- HPF: 串联电容 + 并联电感 (与 LPF 镜像布局) ----
+            C = design['C']
+            L = design['L']
+            fc = design['params']['fc']
+            for i, c_val in enumerate(C):
+                cap = sch_design.add_instance("ads_rflib:C:symbol", (i * 2, 0))
+                cap.parameters["C"].value = f"Cs{i + 1} pF"
+                cap.update_item_annotation()
+                var_inst.vars[f"Cs{i + 1}"] = f"{c_val}"
+                sch_design.add_wire([(i * 2 + 1, 0), (i * 2 + 2, 0)])
+            for i, l_val in enumerate(L):
+                ind = sch_design.add_instance("ads_rflib:L:symbol", (i * 2 + 1.5, -1), angle=-90)
+                ind.parameters["L"].value = f"Lp{i + 1} nH"
+                ind.update_item_annotation()
+                var_inst.vars[f"Lp{i + 1}"] = f"{l_val}"
+                sch_design.add_wire([(i * 2 + 1.5, 0), (i * 2 + 1.5, -1)])
+                sch_design.add_instance("ads_rflib:GROUND:symbol", (i * 2 + 1.5, -2), angle=-90)
+            x_pos = len(C) * 2
+            stop_freq = max(fc * 3, 10e9)
+
+        elif filter_band == 'bandpass':
+            # ---- BPF: 串联LC谐振器 + 并联LC谐振器 ----
+            L_series = design['L_series']
+            C_series = design['C_series']
+            L_shunt = design['L_shunt']
+            C_shunt = design['C_shunt']
+            fs_upper = design['params']['fs_upper']
+            N = design['N']
+            x_pos = 0
+            ls_idx = 0
+            lp_idx = 0
+            for k in range(1, N + 1):
+                if k % 2 != 0:
+                    ind = sch_design.add_instance("ads_rflib:L:symbol", (x_pos, 0))
+                    ind.parameters["L"].value = f"Ls{ls_idx + 1} nH"
+                    ind.update_item_annotation()
+                    var_inst.vars[f"Ls{ls_idx + 1}"] = f"{L_series[ls_idx]}"
+                    sch_design.add_wire([(x_pos + 1, 0), (x_pos + 2, 0)])
+                    cap = sch_design.add_instance("ads_rflib:C:symbol", (x_pos + 2, 0))
+                    cap.parameters["C"].value = f"Cs{ls_idx + 1} pF"
+                    cap.update_item_annotation()
+                    var_inst.vars[f"Cs{ls_idx + 1}"] = f"{C_series[ls_idx]}"
+                    sch_design.add_wire([(x_pos + 3, 0), (x_pos + 4, 0)])
+                    ls_idx += 1
+                    x_pos += 4
+                else:
+                    sch_design.add_wire([(x_pos, 0), (x_pos + 2, 0)])
+                    cap = sch_design.add_instance("ads_rflib:C:symbol", (x_pos + 0.5, -1), angle=-90)
+                    cap.parameters["C"].value = f"Cp{lp_idx + 1} pF"
+                    cap.update_item_annotation()
+                    var_inst.vars[f"Cp{lp_idx + 1}"] = f"{C_shunt[lp_idx]}"
+                    sch_design.add_wire([(x_pos + 0.5, 0), (x_pos + 0.5, -1)])
+                    ind = sch_design.add_instance("ads_rflib:L:symbol", (x_pos + 1.5, -1), angle=-90)
+                    ind.parameters["L"].value = f"Lp{lp_idx + 1} nH"
+                    ind.update_item_annotation()
+                    var_inst.vars[f"Lp{lp_idx + 1}"] = f"{L_shunt[lp_idx]}"
+                    sch_design.add_wire([(x_pos + 1.5, 0), (x_pos + 1.5, -1)])
+                    sch_design.add_instance("ads_rflib:GROUND:symbol", (x_pos + 0.5, -2), angle=-90)
+                    sch_design.add_instance("ads_rflib:GROUND:symbol", (x_pos + 1.5, -2), angle=-90)
+                    lp_idx += 1
+                    x_pos += 2
+            stop_freq = max(fs_upper * 2.5, 10e9)
+
+        else:
+            # ---- LPF: 串联电感 + 并联电容 ----
+            C = design['C']
+            L = design['L']
+            fs = design['params']['fs']
+            for i, l_val in enumerate(L):
+                ind = sch_design.add_instance("ads_rflib:L:symbol", (i * 2, 0))
+                ind.parameters["L"].value = f"L{i + 1} nH"
+                ind.update_item_annotation()
+                var_inst.vars[f"L{i + 1}"] = f"{l_val}"
+                sch_design.add_wire([(i * 2 + 1, 0), (i * 2 + 2, 0)])
+            for i, c_val in enumerate(C):
+                cap = sch_design.add_instance("ads_rflib:C:symbol", (i * 2 + 1.5, -1), angle=-90)
+                cap.parameters["C"].value = f"C{i + 1} pF"
+                cap.update_item_annotation()
+                var_inst.vars[f"C{i + 1}"] = f"{c_val}"
+                sch_design.add_wire([(i * 2 + 1.5, 0), (i * 2 + 1.5, -1)])
+                sch_design.add_instance("ads_rflib:GROUND:symbol", (i * 2 + 1.5, -2), angle=-90)
+            x_pos = len(L) * 2
+            stop_freq = fs * 2
+
         del var_inst.vars["X"]
-        
-        # 添加端口
+
+        # 端口
         sch_design.add_instance("ads_simulation:TermG:symbol", (-1, -1), angle=-90)
         sch_design.add_wire([(-1, -1), (-1, 0), (0, 0)])
-        
-        sch_design.add_instance(
-            "ads_simulation:TermG:symbol", 
-            (len(L) * 2 + 1, -1), 
-            angle=-90
-        )
-        sch_design.add_wire([(len(L) * 2, 0), (len(L) * 2 + 1, 0.0)])
-        sch_design.add_wire([(len(L) * 2 + 1, 0), (len(L) * 2 + 1, -1.0)])
-        
-        # 添加S参数仿真
+        sch_design.add_instance("ads_simulation:TermG:symbol", (x_pos + 1, -1), angle=-90)
+        sch_design.add_wire([(x_pos, 0), (x_pos + 1, 0.0)])
+        sch_design.add_wire([(x_pos + 1, 0), (x_pos + 1, -1.0)])
+
+        # S参数仿真
         sp = sch_design.add_instance("ads_simulation:S_Param:symbol", (2, 2))
         sp.parameters["Start"].value = "0.01 GHz"
-        sp.parameters["Stop"].value = f"{(fs * 2) / 1e9} GHz"
+        sp.parameters["Stop"].value = f"{stop_freq / 1e9} GHz"
         sp.parameters["Step"].value = "0.01 GHz"
         sp.update_item_annotation()
         
@@ -171,22 +223,34 @@ def simulate_single_design(args: Tuple[Dict, str, str]) -> Dict[str, Any]:
                 
                 # 计算性能指标
                 import numpy as np
-                
-                fc = design['params']['fc']
-                fs = design['params']['fs']
+
+                filter_band = design.get('filter_band', 'lowpass')
                 
                 # 转换为dB
                 S11_dB = 20 * np.log10(np.abs(df['S[1,1]'].values) + 1e-20)
                 S21_dB = 20 * np.log10(np.abs(df['S[2,1]'].values) + 1e-20)
                 freq = df['freq'].values
+
+                if filter_band == 'highpass':
+                    fc = design['params']['fc']
+                    fs = design['params']['fs']
+                    passband_mask = freq >= fc
+                    stopband_mask = freq <= fs
+                elif filter_band == 'bandpass':
+                    f_lower = design['params']['f_lower']
+                    f_upper = design['params']['f_upper']
+                    fs_lower = design['params']['fs_lower']
+                    fs_upper = design['params']['fs_upper']
+                    passband_mask = (freq >= f_lower) & (freq <= f_upper)
+                    stopband_mask = (freq <= fs_lower) | (freq >= fs_upper)
+                else:
+                    fc = design['params']['fc']
+                    fs = design['params']['fs']
+                    passband_mask = freq <= fc
+                    stopband_mask = freq >= fs
                 
-                # 通带指标
-                passband_mask = freq <= fc
                 S11_passband = S11_dB[passband_mask]
                 S21_passband = S21_dB[passband_mask]
-                
-                # 阻带指标
-                stopband_mask = freq >= fs
                 S21_stopband = S21_dB[stopband_mask]
                 
                 metrics = {
@@ -195,9 +259,14 @@ def simulate_single_design(args: Tuple[Dict, str, str]) -> Dict[str, Any]:
                     'S21_passband_max_dB': float(np.max(S21_passband)) if len(S21_passband) > 0 else 0,
                     'S21_stopband_max_dB': float(np.max(S21_stopband)) if len(S21_stopband) > 0 else -100,
                     'passband_ripple_dB': float(np.max(S21_passband) - np.min(S21_passband)) if len(S21_passband) > 0 else 0,
-                    'fc_Hz': fc,
-                    'fs_Hz': fs
+                    'filter_band': filter_band,
                 }
+                if filter_band == 'bandpass':
+                    metrics['f_center_Hz'] = design['params']['f_center']
+                    metrics['bandwidth_Hz'] = design['params']['bandwidth']
+                else:
+                    metrics['fc_Hz'] = design['params'].get('fc', 0)
+                    metrics['fs_Hz'] = design['params'].get('fs', 0)
                 
                 result = {
                     'design_id': design_id,

@@ -32,25 +32,21 @@ os.environ['HPEESOF_DIR'] = r"C:/Program Files/Keysight/ADS2025_Update1"
 from keysight.ads import de
 
 
-# 随机样本数量（控制总样本数）
-RANDOM_SPEC_COUNT = 15000
+# 随机样本数量（控制总样本数，均匀分配到各 filter_band）
+RANDOM_SPEC_COUNT = 12000
 
-# 网格规格参数（控制网格样本数）
-GRID_RIPPLE_VALUES = [0.05, 0.1, 0.2, 0.3, 0.5, 0.8, 1.0]
-GRID_FC_VALUES = [0.4e9, 0.6e9, 0.8e9, 1e9, 1.2e9, 1.5e9, 2e9, 2.5e9]
-GRID_FS_RATIOS = [1.3, 1.5, 1.7, 2.0, 2.3, 2.5, 3.0]
-GRID_LA_VALUES = [20, 25, 30, 35, 40, 45, 50, 55]
-GRID_R0_VALUES = [25, 50, 75, 100]
-GRID_ORDER_VALUES = [3, 4, 5, 6, 7, 8, 9]
-
-# 批量仿真每批数量（只影响运行节奏）
+# 网格规格参数（仅用于 LPF，控制网格样本数）
+GRID_RIPPLE_VALUES = [0.1, 0.2, 0.5, 0.8, 1.0]
+GRID_FC_VALUES = [0.5e9, 0.8e9, 1e9, 1.5e9, 2e9, 2.5e9]
+GRID_FS_RATIOS = [1.3, 1.5, 2.0, 2.5, 3.0]
+GRID_LA_VALUES = [20, 30, 40, 50]
+GRID_R0_VALUES = [50, 75, 100]
+GRID_ORDER_VALUES = [3, 4, 5, 6, 7]
 SIM_BATCH_SIZE = 20
 
 # 并行仿真配置（0 = 禁用并行，>0 = 并行进程数，-1 = 自动）
-PARALLEL_WORKERS = -1  # 自动：使用 min(SIM_BATCH_SIZE, CPU核心数//2, 61)
-MAX_WORKERS_LIMIT = 61  # Windows ProcessPoolExecutor 最大限制
-# ==============================================================
-# ==============================================================
+PARALLEL_WORKERS = -1  # 使用 min(SIM_BATCH_SIZE, CPU核心数//2, 61)
+MAX_WORKERS_LIMIT = 61  
 
 class FilterSimulationPipeline:
     """滤波器设计+仿真流水线"""
@@ -134,7 +130,7 @@ class FilterSimulationPipeline:
         return workspace, lib
 
     def create_filter_schematic(self, lib: de.Library, design: Dict) -> Any:
-        """在 ADS 中创建滤波器原理图。
+        """在 ADS 中创建滤波器原理图（支持 LPF / HPF / BPF）。
 
         Args:
             lib: ADS 库对象
@@ -143,6 +139,16 @@ class FilterSimulationPipeline:
         Returns:
             Any: ADS schematic 设计实例
         """
+        filter_band = design.get('filter_band', 'lowpass')
+        if filter_band == 'highpass':
+            return self._create_hpf_schematic(lib, design)
+        elif filter_band == 'bandpass':
+            return self._create_bpf_schematic(lib, design)
+        else:
+            return self._create_lpf_schematic(lib, design)
+
+    # ---- LPF: 串联电感 + 并联电容 ----
+    def _create_lpf_schematic(self, lib, design):
         from keysight.ads.de import db_uu as db
 
         design_id = design['id']
@@ -150,32 +156,28 @@ class FilterSimulationPipeline:
         fs = design['params']['fs']
         L = design['L']
 
-        # 创建原理图
         cell_name = f"{design_id}_schematic"
         design["cell_name"] = cell_name
         sch_design = db.create_schematic(f"{self.library_name}:{cell_name}:schematic")
 
-        # 添加变量
         var_inst = sch_design.add_instance(
             ("ads_datacmps", "VAR", "symbol"),
             (3.5, -2.75),
             name="VAR1",
             angle=-90,
         )
-        
-        # 添加电感
+
         for i, l_val in enumerate(L):
             ind = sch_design.add_instance("ads_rflib:L:symbol", (i * 2, 0))
             ind.parameters["L"].value = f"L{i + 1} nH"
             ind.update_item_annotation()
             var_inst.vars[f"L{i + 1}"] = f"{l_val}"
             sch_design.add_wire([(i * 2 + 1, 0), (i * 2 + 2, 0)])
-        
-        # 添加电容
+
         for i, c_val in enumerate(C):
             cap = sch_design.add_instance(
-                "ads_rflib:C:symbol", 
-                (i * 2 + 1.5, -1), 
+                "ads_rflib:C:symbol",
+                (i * 2 + 1.5, -1),
                 angle=-90
             )
             cap.parameters["C"].value = f"C{i + 1} pF"
@@ -183,34 +185,209 @@ class FilterSimulationPipeline:
             var_inst.vars[f"C{i + 1}"] = f"{c_val}"
             sch_design.add_wire([(i * 2 + 1.5, 0), (i * 2 + 1.5, -1)])
             sch_design.add_instance(
-                "ads_rflib:GROUND:symbol", 
-                (i * 2 + 1.5, -2), 
+                "ads_rflib:GROUND:symbol",
+                (i * 2 + 1.5, -2),
                 angle=-90
             )
-        
+
         del var_inst.vars["X"]
-        
-        # 添加端口
+
+        # 端口
         sch_design.add_instance("ads_simulation:TermG:symbol", (-1, -1), angle=-90)
         sch_design.add_wire([(-1, -1), (-1, 0), (0, 0)])
-        
         sch_design.add_instance(
-            "ads_simulation:TermG:symbol", 
-            (len(L) * 2 + 1, -1), 
+            "ads_simulation:TermG:symbol",
+            (len(L) * 2 + 1, -1),
             angle=-90
         )
         sch_design.add_wire([(len(L) * 2, 0), (len(L) * 2 + 1, 0.0)])
         sch_design.add_wire([(len(L) * 2 + 1, 0), (len(L) * 2 + 1, -1.0)])
-        
-        # 添加S参数仿真
+
+        # S参数仿真
         sp = sch_design.add_instance("ads_simulation:S_Param:symbol", (2, 2))
         sp.parameters["Start"].value = "0.01 GHz"
         sp.parameters["Stop"].value = f"{(fs * 2) / 1e9} GHz"
         sp.parameters["Step"].value = "0.01 GHz"
         sp.update_item_annotation()
-        
+
         sch_design.save_design()
-        
+        return sch_design
+
+    # ---- HPF: 串联电容 + 并联电感 ----
+    # 布局方式与 LPF 完全相同, 只是 L↔C 互换:
+    #   主路径: C0→wire→C1→wire→C2...  (串联电容)
+    #   接地支路: L0, L1... (并联电感, 在串联元件间)
+    def _create_hpf_schematic(self, lib, design):
+        from keysight.ads.de import db_uu as db
+
+        design_id = design['id']
+        C = design['C']   # 串联电容 (主路径)
+        L = design['L']   # 并联电感 (到地)
+        fc = design['params']['fc']
+
+        cell_name = f"{design_id}_schematic"
+        design["cell_name"] = cell_name
+        sch_design = db.create_schematic(f"{self.library_name}:{cell_name}:schematic")
+
+        var_inst = sch_design.add_instance(
+            ("ads_datacmps", "VAR", "symbol"),
+            (3.5, -2.75),
+            name="VAR1",
+            angle=-90,
+        )
+
+        # 串联电容 (主路径, 与 LPF 的电感位置相同)
+        for i, c_val in enumerate(C):
+            cap = sch_design.add_instance("ads_rflib:C:symbol", (i * 2, 0))
+            cap.parameters["C"].value = f"Cs{i + 1} pF"
+            cap.update_item_annotation()
+            var_inst.vars[f"Cs{i + 1}"] = f"{c_val}"
+            sch_design.add_wire([(i * 2 + 1, 0), (i * 2 + 2, 0)])
+
+        # 并联电感 (到地, 与 LPF 的电容位置相同)
+        for i, l_val in enumerate(L):
+            ind = sch_design.add_instance(
+                "ads_rflib:L:symbol",
+                (i * 2 + 1.5, -1),
+                angle=-90,
+            )
+            ind.parameters["L"].value = f"Lp{i + 1} nH"
+            ind.update_item_annotation()
+            var_inst.vars[f"Lp{i + 1}"] = f"{l_val}"
+            sch_design.add_wire([(i * 2 + 1.5, 0), (i * 2 + 1.5, -1)])
+            sch_design.add_instance(
+                "ads_rflib:GROUND:symbol",
+                (i * 2 + 1.5, -2),
+                angle=-90
+            )
+
+        del var_inst.vars["X"]
+
+        # 端口
+        sch_design.add_instance("ads_simulation:TermG:symbol", (-1, -1), angle=-90)
+        sch_design.add_wire([(-1, -1), (-1, 0), (0, 0)])
+        end_x = len(C) * 2
+        sch_design.add_instance(
+            "ads_simulation:TermG:symbol",
+            (end_x + 1, -1),
+            angle=-90
+        )
+        sch_design.add_wire([(end_x, 0), (end_x + 1, 0.0)])
+        sch_design.add_wire([(end_x + 1, 0), (end_x + 1, -1.0)])
+
+        # S参数仿真: HPF 通带在 fc 以上
+        stop_freq = max(fc * 3, 10e9)
+        sp = sch_design.add_instance("ads_simulation:S_Param:symbol", (2, 2))
+        sp.parameters["Start"].value = "0.01 GHz"
+        sp.parameters["Stop"].value = f"{stop_freq / 1e9} GHz"
+        sp.parameters["Step"].value = "0.01 GHz"
+        sp.update_item_annotation()
+
+        sch_design.save_design()
+        return sch_design
+
+    # ---- BPF: 串联LC对 + 并联LC对 ----
+    # 逐元素布局: k=odd → 串联LC(4格), k=even → 并联LC(2格+连线)
+    def _create_bpf_schematic(self, lib, design):
+        from keysight.ads.de import db_uu as db
+
+        design_id = design['id']
+        L_series = design['L_series']
+        C_series = design['C_series']
+        L_shunt = design['L_shunt']
+        C_shunt = design['C_shunt']
+        fs_upper = design['params']['fs_upper']
+        N = design['N']
+
+        cell_name = f"{design_id}_schematic"
+        design["cell_name"] = cell_name
+        sch_design = db.create_schematic(f"{self.library_name}:{cell_name}:schematic")
+
+        var_inst = sch_design.add_instance(
+            ("ads_datacmps", "VAR", "symbol"),
+            (3.5, -2.75),
+            name="VAR1",
+            angle=-90,
+        )
+
+        x_pos = 0
+        ls_idx = 0
+        lp_idx = 0
+
+        for k in range(1, N + 1):
+            if k % 2 != 0:
+                # 串联 LC 谐振器
+                ind = sch_design.add_instance("ads_rflib:L:symbol", (x_pos, 0))
+                ind.parameters["L"].value = f"Ls{ls_idx + 1} nH"
+                ind.update_item_annotation()
+                var_inst.vars[f"Ls{ls_idx + 1}"] = f"{L_series[ls_idx]}"
+                sch_design.add_wire([(x_pos + 1, 0), (x_pos + 2, 0)])
+                cap = sch_design.add_instance("ads_rflib:C:symbol", (x_pos + 2, 0))
+                cap.parameters["C"].value = f"Cs{ls_idx + 1} pF"
+                cap.update_item_annotation()
+                var_inst.vars[f"Cs{ls_idx + 1}"] = f"{C_series[ls_idx]}"
+                sch_design.add_wire([(x_pos + 3, 0), (x_pos + 4, 0)])
+                ls_idx += 1
+                x_pos += 4
+            else:
+                # 并联 LC 谐振器: 先画连接导线, 再接并联元件
+                sch_design.add_wire([(x_pos, 0), (x_pos + 2, 0)])
+                # 并联电容 (到地)
+                cap = sch_design.add_instance(
+                    "ads_rflib:C:symbol",
+                    (x_pos + 0.5, -1),
+                    angle=-90,
+                )
+                cap.parameters["C"].value = f"Cp{lp_idx + 1} pF"
+                cap.update_item_annotation()
+                var_inst.vars[f"Cp{lp_idx + 1}"] = f"{C_shunt[lp_idx]}"
+                sch_design.add_wire([(x_pos + 0.5, 0), (x_pos + 0.5, -1)])
+                # 并联电感 (到地)
+                ind = sch_design.add_instance(
+                    "ads_rflib:L:symbol",
+                    (x_pos + 1.5, -1),
+                    angle=-90,
+                )
+                ind.parameters["L"].value = f"Lp{lp_idx + 1} nH"
+                ind.update_item_annotation()
+                var_inst.vars[f"Lp{lp_idx + 1}"] = f"{L_shunt[lp_idx]}"
+                sch_design.add_wire([(x_pos + 1.5, 0), (x_pos + 1.5, -1)])
+                # 地
+                sch_design.add_instance(
+                    "ads_rflib:GROUND:symbol",
+                    (x_pos + 0.5, -2),
+                    angle=-90
+                )
+                sch_design.add_instance(
+                    "ads_rflib:GROUND:symbol",
+                    (x_pos + 1.5, -2),
+                    angle=-90
+                )
+                lp_idx += 1
+                x_pos += 2
+
+        del var_inst.vars["X"]
+
+        # 端口
+        sch_design.add_instance("ads_simulation:TermG:symbol", (-1, -1), angle=-90)
+        sch_design.add_wire([(-1, -1), (-1, 0), (0, 0)])
+        sch_design.add_instance(
+            "ads_simulation:TermG:symbol",
+            (x_pos + 1, -1),
+            angle=-90
+        )
+        sch_design.add_wire([(x_pos, 0), (x_pos + 1, 0.0)])
+        sch_design.add_wire([(x_pos + 1, 0), (x_pos + 1, -1.0)])
+
+        # S参数仿真
+        stop_freq = max(fs_upper * 2.5, 10e9)
+        sp = sch_design.add_instance("ads_simulation:S_Param:symbol", (2, 2))
+        sp.parameters["Start"].value = "0.01 GHz"
+        sp.parameters["Stop"].value = f"{stop_freq / 1e9} GHz"
+        sp.parameters["Step"].value = "0.01 GHz"
+        sp.update_item_annotation()
+
+        sch_design.save_design()
         return sch_design
     
     def run_batch_simulation(self, 
@@ -426,7 +603,7 @@ class FilterSimulationPipeline:
     
     def calculate_metrics(self, df: pd.DataFrame, design: Dict) -> Dict:
         """
-        计算滤波器性能指标
+        计算滤波器性能指标 (支持 LPF / HPF / BPF)
         
         Args:
             df: S参数数据
@@ -436,22 +613,34 @@ class FilterSimulationPipeline:
             dict: 性能指标
         """
         import numpy as np
-        
-        fc = design['params']['fc']
-        fs = design['params']['fs']
-        
+
+        filter_band = design.get('filter_band', 'lowpass')
+
         # 转换为dB
         S11_dB = 20 * np.log10(np.abs(df['S[1,1]'].values) + 1e-20)
         S21_dB = 20 * np.log10(np.abs(df['S[2,1]'].values) + 1e-20)
         freq = df['freq'].values
-        
-        # 通带指标 (0 - fc)
-        passband_mask = freq <= fc
+
+        if filter_band == 'highpass':
+            fc = design['params']['fc']
+            fs = design['params']['fs']
+            passband_mask = freq >= fc
+            stopband_mask = freq <= fs
+        elif filter_band == 'bandpass':
+            f_lower = design['params']['f_lower']
+            f_upper = design['params']['f_upper']
+            fs_lower = design['params']['fs_lower']
+            fs_upper = design['params']['fs_upper']
+            passband_mask = (freq >= f_lower) & (freq <= f_upper)
+            stopband_mask = (freq <= fs_lower) | (freq >= fs_upper)
+        else:  # lowpass
+            fc = design['params']['fc']
+            fs = design['params']['fs']
+            passband_mask = freq <= fc
+            stopband_mask = freq >= fs
+
         S11_passband = S11_dB[passband_mask]
         S21_passband = S21_dB[passband_mask]
-        
-        # 阻带指标 (fs - end)
-        stopband_mask = freq >= fs
         S21_stopband = S21_dB[stopband_mask]
         
         metrics = {
@@ -460,9 +649,18 @@ class FilterSimulationPipeline:
             'S21_passband_max_dB': float(np.max(S21_passband)) if len(S21_passband) > 0 else 0,
             'S21_stopband_max_dB': float(np.max(S21_stopband)) if len(S21_stopband) > 0 else -100,
             'passband_ripple_dB': float(np.max(S21_passband) - np.min(S21_passband)) if len(S21_passband) > 0 else 0,
-            'fc_Hz': fc,
-            'fs_Hz': fs
+            'filter_band': filter_band,
         }
+
+        # 添加频段特定信息
+        if filter_band == 'bandpass':
+            metrics['f_center_Hz'] = design['params']['f_center']
+            metrics['bandwidth_Hz'] = design['params']['bandwidth']
+            metrics['fs_lower_Hz'] = fs_lower
+            metrics['fs_upper_Hz'] = fs_upper
+        else:
+            metrics['fc_Hz'] = design['params']['fc']
+            metrics['fs_Hz'] = design['params']['fs']
         
         return metrics
     
@@ -486,15 +684,21 @@ class FilterSimulationPipeline:
         if save_summary:
             summary = []
             for r in results:
-                summary.append({
+                row = {
                     'design_id': r['design_id'],
+                    'filter_band': r['design'].get('filter_band', 'lowpass'),
                     'order': r['design']['N'],
-                    'fc_MHz': r['design']['params']['fc'] / 1e6,
-                    'fs_MHz': r['design']['params']['fs'] / 1e6,
                     'S11_max_dB': r['metrics']['S11_max_dB'],
                     'S21_min_dB': r['metrics']['S21_passband_min_dB'],
-                    'ripple_dB': r['metrics']['passband_ripple_dB']
-                })
+                    'ripple_dB': r['metrics']['passband_ripple_dB'],
+                }
+                if r['design'].get('filter_band') == 'bandpass':
+                    row['f_center_MHz'] = r['design']['params']['f_center'] / 1e6
+                    row['bw_MHz'] = r['design']['params']['bandwidth'] / 1e6
+                else:
+                    row['fc_MHz'] = r['design']['params'].get('fc', 0) / 1e6
+                    row['fs_MHz'] = r['design']['params'].get('fs', 0) / 1e6
+                summary.append(row)
             
             summary_df = pd.DataFrame(summary)
             summary_path = os.path.join(self.output_dir, "summary.csv")
@@ -528,15 +732,18 @@ def main_quick_test():
     pipeline.save_results(results)
 
 
-def main_dataset_generation(filter_type: str, workers: int = None):
-    """大规模数据集生成
+def main_dataset_generation(filter_type: str, workers: int = None,
+                            filter_bands: List[str] = None):
+    """大规模数据集生成 (支持 LPF / HPF / BPF)
     
     Args:
-        filter_type: 滤波器类型
+        filter_type: 滤波器类型 (chebyshev / butterworth)
         workers: 并行进程数（None=自动检测，0=禁用并行）
+        filter_bands: 要生成的频带类型列表, 默认 ['lowpass']
     """
+    filter_bands = filter_bands or ['lowpass']
     print("="*70)
-    print("大规模数据集生成")
+    print(f"大规模数据集生成 (type={filter_type}, bands={filter_bands})")
     print("="*70)
     date_tag = time.strftime("%Y%m%d")
     pipeline = FilterSimulationPipeline(
@@ -547,15 +754,29 @@ def main_dataset_generation(filter_type: str, workers: int = None):
     pipeline.generator.filter_type = filter_type
     pipeline.generator.designer = get_filter_designer(filter_type)
     def _spec_key(spec: Dict) -> Tuple:
-        return (
-            spec.get('filter_type', 'chebyshev'),
-            int(spec.get('order') or 0),
-            round(spec['ripple_db'], 4),
-            int(spec['fc']),
-            int(spec['fs']),
-            int(spec['R0']),
-            int(spec['La'])
-        )
+        band = spec.get('filter_band', 'lowpass')
+        if band == 'bandpass':
+            return (
+                spec.get('filter_type', 'chebyshev'),
+                band,
+                int(spec.get('order') or 0),
+                round(spec['ripple_db'], 4),
+                int(spec['f_center']),
+                int(spec['bandwidth']),
+                int(spec['R0']),
+                int(spec['La'])
+            )
+        else:
+            return (
+                spec.get('filter_type', 'chebyshev'),
+                band,
+                int(spec.get('order') or 0),
+                round(spec['ripple_db'], 4),
+                int(spec.get('fc', 0)),
+                int(spec.get('fs', 0)),
+                int(spec['R0']),
+                int(spec['La'])
+            )
 
     def _unique_specs(specs: List[Dict]) -> List[Dict]:
         seen = set()
@@ -574,23 +795,29 @@ def main_dataset_generation(filter_type: str, workers: int = None):
             R0_values=GRID_R0_VALUES,
             order_values=GRID_ORDER_VALUES,
             filter_type=filter_type,
+            filter_bands=filter_bands,
         )
-    grid_specs = pipeline.generator.generate_grid_specs(
-        ripple_values=GRID_RIPPLE_VALUES,
-        fc_values=GRID_FC_VALUES,
-        fs_ratios=GRID_FS_RATIOS,
-        La_values=GRID_LA_VALUES,
-        R0_values=GRID_R0_VALUES,
-        order_values=GRID_ORDER_VALUES,
-        filter_type=filter_type,
-    )
+
+    # 网格规格仅对 LPF 生成; HPF/BPF 使用随机规格
+    grid_specs = []
+    if 'lowpass' in filter_bands:
+        grid_specs = pipeline.generator.generate_grid_specs(
+            ripple_values=GRID_RIPPLE_VALUES,
+            fc_values=GRID_FC_VALUES,
+            fs_ratios=GRID_FS_RATIOS,
+            La_values=GRID_LA_VALUES,
+            R0_values=GRID_R0_VALUES,
+            order_values=GRID_ORDER_VALUES,
+            filter_type=filter_type,
+        )
 
     random_specs = _random_specs(RANDOM_SPEC_COUNT)
-    # 生成全局唯一 design_id，避免 batch 内从 0000 重新计数
+    # 生成全局唯一 design_id
     specs = _unique_specs(grid_specs + random_specs)
     for idx, spec in enumerate(specs):
         ftype = spec.get("filter_type", "chebyshev")
-        spec["id"] = f"ds_{date_tag}_{ftype}_{idx:06d}"
+        band = spec.get("filter_band", "lowpass")
+        spec["id"] = f"ds_{date_tag}_{ftype}_{band}_{idx:06d}"
 
     designs = pipeline.generator.design_batch(specs)
 
@@ -660,6 +887,14 @@ if __name__ == '__main__':
         help='滤波器类型: chebyshev/butterworth/elliptic'
     )
     parser.add_argument(
+        '--filter_bands',
+        type=str,
+        nargs='+',
+        default=['lowpass'],
+        choices=['lowpass', 'highpass', 'bandpass'],
+        help='频带类型: lowpass highpass bandpass (可多选)'
+    )
+    parser.add_argument(
         '--workers',
         type=int,
         default=None,
@@ -671,4 +906,8 @@ if __name__ == '__main__':
     if args.mode == 'test':
         main_quick_test()
     else:
-        main_dataset_generation(args.filter_type, workers=args.workers)
+        main_dataset_generation(
+            args.filter_type,
+            workers=args.workers,
+            filter_bands=args.filter_bands,
+        )

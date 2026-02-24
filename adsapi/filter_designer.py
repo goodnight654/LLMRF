@@ -104,7 +104,165 @@ class ChebyshevFilterDesigner:
         
         self.design_history.append(design)
         return design
-    
+
+    # --------------- 公用 g 值计算 ---------------
+    def _compute_chebyshev_gk(self, ripple_db: float, N: int) -> List[float]:
+        """计算 Chebyshev 归一化原型 g 值"""
+        pi = np.pi
+        beta = np.log(1 / np.tanh(ripple_db / 17.37))
+        gamma = np.sinh(beta / (2 * N))
+        ak, bk, gk = [], [], []
+        for k in range(1, N + 1):
+            ak.append(np.sin(((2 * k - 1) * pi) / (2 * N)))
+            bk.append(gamma ** 2 + (np.sin(k * pi / N)) ** 2)
+        for k in range(1, N + 1):
+            if k == 1:
+                gk.append(round(2 * ak[0] / gamma, 4))
+            else:
+                gk.append(round((4 * ak[k - 2] * ak[k - 1]) / (bk[k - 2] * gk[k - 2]), 4))
+        return gk
+
+    # --------------- 高通滤波器 (HPF) ---------------
+    def design_hpf_by_attenuation(
+        self,
+        ripple_db: float,
+        fc: float,
+        fs: float,
+        R0: float,
+        La: float,
+        order: Optional[int] = None,
+    ) -> Dict:
+        """
+        设计 Chebyshev 高通滤波器
+
+        Args:
+            ripple_db: 通带波纹 (dB)
+            fc: 通带截止频率 (Hz), 高于 fc 为通带
+            fs: 阻带频率 (Hz), 低于 fs 为阻带, fs < fc
+            R0: 参考阻抗 (Ω)
+            La: 阻带衰减目标 (dB, 正值)
+            order: 指定阶数, None 则自动计算
+        """
+        assert fs < fc, f"HPF 要求 fs({fs}) < fc({fc})"
+
+        ep = 10 ** (ripple_db / 10) - 1
+        pi = np.pi
+        wc = 2 * pi * fc
+        omega_ratio = fc / fs  # 选择性比 >1
+
+        if order is None:
+            N_raw = np.arccosh(np.sqrt((10 ** (La / 10) - 1) / ep)) / np.arccosh(omega_ratio)
+            N = max(2, int(np.ceil(N_raw)))
+        else:
+            N = int(order)
+
+        Atten = -10 * np.log10(1 + ep * np.cosh(N * np.arccosh(omega_ratio)) ** 2)
+        Atten = round(Atten, 2)
+
+        gk = self._compute_chebyshev_gk(ripple_db, N)
+
+        # HPF 元件转换: 奇数阶→串联电容, 偶数阶→并联电感
+        C = []  # 串联电容 (pF)
+        L = []  # 并联电感 (nH)
+        for k in range(1, N + 1):
+            if k % 2 != 0:
+                c_val = 1.0 / (gk[k - 1] * R0 * wc)
+                C.append(round(c_val / 1e-12, 2))
+            else:
+                l_val = R0 / (gk[k - 1] * wc)
+                L.append(round(l_val / 1e-9, 2))
+
+        design = {
+            'L': L, 'C': C, 'N': N, 'Atten': Atten, 'gk': gk,
+            'filter_band': 'highpass',
+            'params': {
+                'ripple_db': ripple_db, 'fc': fc, 'fs': fs,
+                'R0': R0, 'La_target': La, 'La_actual': Atten
+            }
+        }
+        self.design_history.append(design)
+        return design
+
+    # --------------- 带通滤波器 (BPF) ---------------
+    def design_bpf_by_attenuation(
+        self,
+        ripple_db: float,
+        f_center: float,
+        bandwidth: float,
+        fs_lower: float,
+        fs_upper: float,
+        R0: float,
+        La: float,
+        order: Optional[int] = None,
+    ) -> Dict:
+        """
+        设计 Chebyshev 带通滤波器
+
+        Args:
+            ripple_db: 通带波纹 (dB)
+            f_center: 中心频率 (Hz)
+            bandwidth: 通带带宽 (Hz)
+            fs_lower: 下阻带频率 (Hz)
+            fs_upper: 上阻带频率 (Hz)
+            R0: 参考阻抗 (Ω)
+            La: 阻带衰减目标 (dB, 正值)
+            order: 指定阶数, None 则自动计算
+        """
+        f_lower = f_center - bandwidth / 2
+        f_upper = f_center + bandwidth / 2
+        f0 = np.sqrt(f_lower * f_upper)  # 几何中心频率
+        w0 = 2 * np.pi * f0
+        delta = bandwidth / f0  # 分数带宽
+
+        ep = 10 ** (ripple_db / 10) - 1
+
+        # 归一化阻带频率 (取更严格的一侧)
+        omega_s_lo = abs(fs_lower / f0 - f0 / fs_lower) / delta
+        omega_s_hi = abs(fs_upper / f0 - f0 / fs_upper) / delta
+        omega_s = min(omega_s_lo, omega_s_hi)
+
+        if order is None:
+            N_raw = np.arccosh(np.sqrt((10 ** (La / 10) - 1) / ep)) / np.arccosh(omega_s)
+            N = max(2, int(np.ceil(N_raw)))
+        else:
+            N = int(order)
+
+        Atten = -10 * np.log10(1 + ep * np.cosh(N * np.arccosh(omega_s)) ** 2)
+        Atten = round(Atten, 2)
+
+        gk = self._compute_chebyshev_gk(ripple_db, N)
+
+        # BPF 元件转换
+        L_series, C_series = [], []  # 串联 LC 谐振器
+        L_shunt, C_shunt = [], []    # 并联 LC 谐振器
+        for k in range(1, N + 1):
+            if k % 2 != 0:  # 串联元件 → 串联 LC
+                Ls = gk[k - 1] * R0 / (delta * w0)
+                Cs = delta / (gk[k - 1] * R0 * w0)
+                L_series.append(round(Ls / 1e-9, 2))
+                C_series.append(round(Cs / 1e-12, 2))
+            else:            # 并联元件 → 并联 LC
+                Cp = gk[k - 1] / (delta * R0 * w0)
+                Lp = R0 * delta / (gk[k - 1] * w0)
+                C_shunt.append(round(Cp / 1e-12, 2))
+                L_shunt.append(round(Lp / 1e-9, 2))
+
+        design = {
+            'L_series': L_series, 'C_series': C_series,
+            'L_shunt': L_shunt, 'C_shunt': C_shunt,
+            'N': N, 'Atten': Atten, 'gk': gk,
+            'filter_band': 'bandpass',
+            'params': {
+                'ripple_db': ripple_db,
+                'f_center': f_center, 'bandwidth': bandwidth,
+                'f_lower': f_lower, 'f_upper': f_upper,
+                'fs_lower': fs_lower, 'fs_upper': fs_upper,
+                'R0': R0, 'La_target': La, 'La_actual': Atten
+            }
+        }
+        self.design_history.append(design)
+        return design
+
     def generate_netlist(self, design: Dict, design_name: str = "filter") -> str:
         """
         生成 ADS 网表
@@ -252,6 +410,115 @@ class ButterworthFilterDesigner:
         self.design_history.append(design)
         return design
 
+    # --------------- Butterworth HPF ---------------
+    def design_hpf_by_attenuation(
+        self,
+        ripple_db: float,
+        fc: float,
+        fs: float,
+        R0: float,
+        La: float,
+        order: Optional[int] = None,
+    ) -> Dict:
+        """设计 Butterworth 高通滤波器 (HPF)"""
+        assert fs < fc, f"HPF 要求 fs({fs}) < fc({fc})"
+        pi = np.pi
+        wc = 2 * pi * fc
+        omega_ratio = fc / fs
+
+        if order is None:
+            N = int(np.ceil(np.log10(10 ** (La / 10) - 1) / (2 * np.log10(omega_ratio))))
+        else:
+            N = int(order)
+
+        gk = [round(2 * np.sin((2 * k - 1) * pi / (2 * N)), 4) for k in range(1, N + 1)]
+
+        C, L = [], []
+        for k in range(1, N + 1):
+            if k % 2 != 0:
+                c_val = 1.0 / (gk[k - 1] * R0 * wc)
+                C.append(round(c_val / 1e-12, 2))
+            else:
+                l_val = R0 / (gk[k - 1] * wc)
+                L.append(round(l_val / 1e-9, 2))
+
+        Atten = -10 * np.log10(1 + (omega_ratio) ** (2 * N))
+        Atten = round(Atten, 2)
+
+        design = {
+            'L': L, 'C': C, 'N': N, 'Atten': Atten, 'gk': gk,
+            'filter_band': 'highpass',
+            'params': {
+                'ripple_db': ripple_db, 'fc': fc, 'fs': fs,
+                'R0': R0, 'La_target': La, 'La_actual': Atten
+            }
+        }
+        self.design_history.append(design)
+        return design
+
+    # --------------- Butterworth BPF ---------------
+    def design_bpf_by_attenuation(
+        self,
+        ripple_db: float,
+        f_center: float,
+        bandwidth: float,
+        fs_lower: float,
+        fs_upper: float,
+        R0: float,
+        La: float,
+        order: Optional[int] = None,
+    ) -> Dict:
+        """设计 Butterworth 带通滤波器 (BPF)"""
+        f_lower = f_center - bandwidth / 2
+        f_upper = f_center + bandwidth / 2
+        f0 = np.sqrt(f_lower * f_upper)
+        w0 = 2 * np.pi * f0
+        delta = bandwidth / f0
+        pi = np.pi
+
+        omega_s_lo = abs(fs_lower / f0 - f0 / fs_lower) / delta
+        omega_s_hi = abs(fs_upper / f0 - f0 / fs_upper) / delta
+        omega_s = min(omega_s_lo, omega_s_hi)
+
+        if order is None:
+            N = int(np.ceil(np.log10(10 ** (La / 10) - 1) / (2 * np.log10(omega_s))))
+        else:
+            N = int(order)
+
+        gk = [round(2 * np.sin((2 * k - 1) * pi / (2 * N)), 4) for k in range(1, N + 1)]
+
+        L_series, C_series, L_shunt, C_shunt = [], [], [], []
+        for k in range(1, N + 1):
+            if k % 2 != 0:
+                Ls = gk[k - 1] * R0 / (delta * w0)
+                Cs = delta / (gk[k - 1] * R0 * w0)
+                L_series.append(round(Ls / 1e-9, 2))
+                C_series.append(round(Cs / 1e-12, 2))
+            else:
+                Cp = gk[k - 1] / (delta * R0 * w0)
+                Lp = R0 * delta / (gk[k - 1] * w0)
+                C_shunt.append(round(Cp / 1e-12, 2))
+                L_shunt.append(round(Lp / 1e-9, 2))
+
+        Atten = -10 * np.log10(1 + omega_s ** (2 * N))
+        Atten = round(Atten, 2)
+
+        design = {
+            'L_series': L_series, 'C_series': C_series,
+            'L_shunt': L_shunt, 'C_shunt': C_shunt,
+            'N': N, 'Atten': Atten, 'gk': gk,
+            'filter_band': 'bandpass',
+            'params': {
+                'ripple_db': ripple_db,
+                'f_center': f_center, 'bandwidth': bandwidth,
+                'f_lower': f_lower, 'f_upper': f_upper,
+                'fs_lower': fs_lower, 'fs_upper': fs_upper,
+                'R0': R0, 'La_target': La, 'La_actual': Atten
+            }
+        }
+        self.design_history.append(design)
+        return design
+
 
 def get_filter_designer(filter_type: str):
     """按类型返回滤波器设计器"""
@@ -289,17 +556,21 @@ class FilterDatasetGenerator:
         R0_values: Optional[List[float]] = None,
         order_values: Optional[List[int]] = None,
         filter_type: Optional[str] = None,
+        filter_bands: Optional[List[str]] = None,
     ) -> List[Dict]:
         """
-        生成随机的滤波器规格
+        生成随机的滤波器规格 (支持 LPF / HPF / BPF)
         
         Args:
             num_samples: 样本数量
+            filter_bands: 要生成的频带类型列表, 默认 ['lowpass']
+                          可选: ['lowpass', 'highpass', 'bandpass']
             
         Returns:
             list: 规格列表
         """
         specs = []
+        filter_bands = filter_bands or ['lowpass']
         
         # 定义参数范围
         ripple_range = [0.01, 0.05, 0.1, 0.5, 1.0]  # dB
@@ -307,26 +578,59 @@ class FilterDatasetGenerator:
         R0_values = R0_values or [50]
         
         for i in range(num_samples):
-            # 随机选择参数
-            ripple_db = np.random.choice(ripple_range)
-            fc = np.random.choice(fc_range)
-            
-            # fs 在 fc 的 1.5-3 倍之间
-            fs_ratio = np.random.uniform(1.5, 3.0)
-            fs = fc * fs_ratio
-            
-            # 所需衰减在 30-60 dB之间
-            La = np.random.uniform(30, 60)
-            
-            spec = {
-                'id': f'filter_{i:04d}',
-                'ripple_db': ripple_db,
-                'fc': fc,
-                'fs': fs,
-                'R0': float(np.random.choice(R0_values)),
-                'La': float(La),
-                'filter_type': (filter_type or self.filter_type)
-            }
+            band = np.random.choice(filter_bands)
+            ripple_db = float(np.random.choice(ripple_range))
+            R0 = float(np.random.choice(R0_values))
+            La = float(np.random.uniform(30, 60))
+            ftype = filter_type or self.filter_type
+
+            if band == 'highpass':
+                fc = float(np.random.choice(fc_range))
+                fs_ratio = np.random.uniform(0.3, 0.7)  # fs < fc
+                fs = fc * fs_ratio
+                spec = {
+                    'id': f'filter_{i:04d}',
+                    'ripple_db': ripple_db,
+                    'fc': fc,
+                    'fs': fs,
+                    'R0': R0,
+                    'La': La,
+                    'filter_type': ftype,
+                    'filter_band': 'highpass',
+                }
+            elif band == 'bandpass':
+                f_center = float(np.random.choice(fc_range))
+                frac_bw = np.random.uniform(0.05, 0.3)  # 分数带宽 5%-30%
+                bandwidth = f_center * frac_bw
+                fs_margin = np.random.uniform(1.3, 2.0)
+                fs_lower = f_center - bandwidth / 2 * fs_margin
+                fs_upper = f_center + bandwidth / 2 * fs_margin
+                spec = {
+                    'id': f'filter_{i:04d}',
+                    'ripple_db': ripple_db,
+                    'f_center': f_center,
+                    'bandwidth': bandwidth,
+                    'fs_lower': fs_lower,
+                    'fs_upper': fs_upper,
+                    'R0': R0,
+                    'La': La,
+                    'filter_type': ftype,
+                    'filter_band': 'bandpass',
+                }
+            else:  # lowpass
+                fc = float(np.random.choice(fc_range))
+                fs_ratio = np.random.uniform(1.5, 3.0)
+                fs = fc * fs_ratio
+                spec = {
+                    'id': f'filter_{i:04d}',
+                    'ripple_db': ripple_db,
+                    'fc': fc,
+                    'fs': fs,
+                    'R0': R0,
+                    'La': La,
+                    'filter_type': ftype,
+                }
+
             if order_values:
                 spec['order'] = int(np.random.choice(order_values))
             specs.append(spec)
@@ -401,14 +705,37 @@ class FilterDatasetGenerator:
             try:
                 filter_type = spec.get('filter_type', self.filter_type)
                 self.designer = get_filter_designer(filter_type)
-                design = self.designer.design_lpf_by_attenuation(
-                    ripple_db=spec['ripple_db'],
-                    fc=spec['fc'],
-                    fs=spec['fs'],
-                    R0=spec['R0'],
-                    La=spec['La'],
-                    order=spec.get('order')
-                )
+                filter_band = spec.get('filter_band', 'lowpass')
+
+                if filter_band == 'highpass':
+                    design = self.designer.design_hpf_by_attenuation(
+                        ripple_db=spec['ripple_db'],
+                        fc=spec['fc'],
+                        fs=spec['fs'],
+                        R0=spec['R0'],
+                        La=spec['La'],
+                        order=spec.get('order'),
+                    )
+                elif filter_band == 'bandpass':
+                    design = self.designer.design_bpf_by_attenuation(
+                        ripple_db=spec['ripple_db'],
+                        f_center=spec['f_center'],
+                        bandwidth=spec['bandwidth'],
+                        fs_lower=spec['fs_lower'],
+                        fs_upper=spec['fs_upper'],
+                        R0=spec['R0'],
+                        La=spec['La'],
+                        order=spec.get('order'),
+                    )
+                else:  # lowpass (default)
+                    design = self.designer.design_lpf_by_attenuation(
+                        ripple_db=spec['ripple_db'],
+                        fc=spec['fc'],
+                        fs=spec['fs'],
+                        R0=spec['R0'],
+                        La=spec['La'],
+                        order=spec.get('order'),
+                    )
                 
                 # 添加ID
                 design['id'] = spec['id']
