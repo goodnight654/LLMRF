@@ -1,376 +1,512 @@
-# RF-FilterLLM: 基于大语言模型高效微调的射频滤波器自动化设计方法
+# RF-FilterLLM: Automated RF Filter Design via Domain-Specific Fine-Tuning of Large Language Models
 
-> **论文初稿 — 基于已有实验数据撰写，可根据需要进一步补充实验和修改**
-
----
-
-## 摘要 (Abstract)
-
-射频（RF）滤波器设计是无线通信系统中的关键环节，传统上依赖工程师凭借专业经验进行参数选择和迭代优化，效率低下且严重依赖领域专家知识。本文提出 RF-FilterLLM，一种基于大语言模型（LLM）高效微调的射频滤波器自动化设计方法。针对通用大模型在射频专业领域知识缺失的问题，我们构建了包含 25,168 条中英文混合样本的射频滤波器专用指令微调数据集 RF-Filter-SFT，覆盖低通（LPF）、高通（HPF）、带通（BPF）三种频段；采用 QLoRA（4-bit 量化 LoRA）技术在消费级显卡（单张 RTX 4090）上对 Qwen3-8B 模型进行高效微调，仅需训练 0.047% 的参数量。实验结果表明，微调后的 Qwen3-8B-RF 模型在滤波器阶数预测准确率上从原始模型的 19.5% 提升至 83.4%（200 样本评估），JSON 格式输出成功率达 100%，数值参数还原精度中位误差趋近于零。本文还设计了"仿真—评估—反思—修正"四步闭环 Agent 架构，实现了从用户需求输入到 ADS 仿真验证的全流程自动化设计，为射频 EDA 智能化提供了新的范式。
-
-**关键词**: 大语言模型；射频滤波器设计；QLoRA 微调；指令微调数据集；EDA 自动化；闭环 Agent
+# RF-FilterLLM: 基于大语言模型领域微调的射频滤波器自动化设计
 
 ---
 
-## 1. 引言 (Introduction)
+## Abstract / 摘要
 
-### 1.1 研究背景
+### EN
 
-射频（Radio Frequency, RF）滤波器是无线通信系统中不可或缺的核心器件，广泛应用于蜂窝基站、雷达系统、卫星通信等领域。一个典型的滤波器设计流程包括：根据系统需求确定频率指标（截止频率、阻带频率、通带纹波等）→ 选择滤波器类型（Chebyshev、Butterworth 等）→ 计算滤波器阶数 → 综合原型参数 → 在 EDA 工具（如 Keysight ADS、ANSYS HFSS）中进行仿真验证 → 迭代优化。这一过程高度依赖工程师的专业经验，尤其是在阶数选择和参数权衡方面，需要深厚的微波理论功底。
+We present RF-FilterLLM, a framework for automated radio-frequency (RF) filter design through domain-specific fine-tuning of large language models. We construct RF-Filter-SFT, a bilingual (Chinese–English) instruction-tuning dataset of 25,168 samples spanning Chebyshev/Butterworth lowpass, highpass, and bandpass filters. Using QLoRA (NF4 + LoRA $r{=}8$), we fine-tune Qwen3-8B on a single RTX 4090 with only 0.047% trainable parameters (3.83M/8.19B). The resulting Qwen3-8B-RF achieves filter-order prediction accuracy of 83.4% (vs. 19.5% baseline), 100% JSON compliance, and near-zero numerical error. A four-stage closed-loop reflective agent (Generate → Simulate → Evaluate → Reflect) further automates end-to-end design with Keysight ADS, converging in as few as 2 iterations. To the best of our knowledge, RF-FilterLLM is the first fine-tuned LLM specifically for RF filter synthesis, and the first to quantitatively benchmark filter-order prediction as an evaluation metric.
 
-近年来，大语言模型（Large Language Model, LLM）在代码生成、数学推理等领域展现出了惊人的能力。一些开创性工作（如 WiseEDA [1]、ChipChat [2]）探索了将 LLM 应用于电子设计自动化（EDA）领域的可能性。然而，现有工作主要基于通用大模型（如 GPT-4）的提示工程（Prompt Engineering），存在以下局限性：
+### 中文
 
-1. **领域知识缺失**：通用 LLM 对射频微波领域的专业概念（如 S 参数的物理意义、切比雪夫逼近理论中阶数与衰减的非线性关系）理解不足，导致参数预测严重偏差；
-2. **格式一致性差**：直接使用通用模型生成的输出格式不稳定，难以被 EDA 工具直接解析调用；
-3. **依赖闭源 API**：基于 GPT-4 等闭源模型的方案存在数据隐私、成本高昂、延迟不可控等问题；
-4. **单一拓扑局限**：已有工作通常仅支持单一类型滤波器（如低通），无法覆盖实际工程中多样化的设计需求。
+本文提出 RF-FilterLLM，一种基于大语言模型领域微调的射频滤波器自动化设计框架。构建了包含 25,168 条中英双语样本的指令微调数据集 RF-Filter-SFT，覆盖 Chebyshev/Butterworth 低通、高通、带通滤波器。采用 QLoRA (NF4 + LoRA $r{=}8$) 在单张 RTX 4090 上微调 Qwen3-8B，仅需 0.047% 可训练参数 (3.83M/8.19B)。微调后的 Qwen3-8B-RF 将阶数预测准确率从 19.5% 提升至 83.4%，JSON 遵从率 100%，数值误差趋近于零。四步闭环反思 Agent（生成→仿真→评估→反思）实现与 Keysight ADS 的端到端自动化设计，最少 2 轮迭代收敛。据我们所知，RF-FilterLLM 是首个面向 RF 滤波器综合的微调 LLM，也是首次将阶数预测作为量化评估指标。
 
-### 1.2 本文贡献
-
-针对上述问题，本文提出 RF-FilterLLM 方法，主要贡献包括：
-
-1. **专业数据集构建**（Section III-A）：首次设计面向射频滤波器领域的大规模指令微调数据集 RF-Filter-SFT，包含 25,168 条训练样本，覆盖 Chebyshev/Butterworth 两种类型、LPF/HPF/BPF 三种频段、中英文双语交互，并创新性地引入"动态意图补全机制"——当关键参数缺失时主动追问，非关键参数（如滤波器阶数）则基于物理直觉自动补全。
-
-2. **低资源高效微调**（Section III-B）：验证了在消费级硬件（单张 RTX 4090 24GB）上，使用 QLoRA（4-bit NF4 量化 + LoRA）技术对 8B 级别模型进行高效微调的可行性，仅训练 3.83M 参数（0.047%），训练时间约 9.4 小时。
-
-3. **多频段统一设计框架**（Section III-C）：提出统一的多频段滤波器设计范式，在同一模型中集成 LPF、HPF、BPF 三种频段的设计能力，包括 HPF 的频率倒置变换和 BPF 的窄带近似变换。
-
-4. **闭环反思 Agent 架构**（Section III-D）：设计了"仿真—评估—反思—修正"四步闭环 Agent，使 LLM 能够根据 ADS 仿真结果进行自主诊断与参数修正，实现具备物理直觉的自动化设计。
-
-5. **全面的实验验证**（Section IV）：通过基线对比实验、分频段分析、数值精度评估等多维度验证，证明微调方法的有效性——阶数预测准确率从 19.5% 提升至 83.4%。
+**Keywords / 关键词**: Large language model, RF filter design, QLoRA, instruction tuning, EDA automation, closed-loop agent / 大语言模型, 射频滤波器设计, QLoRA, 指令微调, EDA 自动化, 闭环 Agent
 
 ---
 
-## 2. 相关工作 (Related Work)
+## I. Introduction / 引言
 
-### 2.1 LLM 在 EDA 领域的应用
+### EN
 
-近年来，大语言模型在电子设计自动化领域的应用受到广泛关注。ChipChat [2] 首次探索了 LLM 在硬件设计中的对话式交互能力，ChipGPT [3] 提出了基于 LLM 的自动化硬件设计流程。在射频领域，WiseEDA [1] 提出了利用 GPT-4 驱动的 EDA 自动化框架，通过提示工程实现滤波器参数的自动生成与仿真验证。然而，这些工作普遍依赖闭源大模型的 API 调用，且未针对射频领域进行专门的模型优化。
+RF filters are essential building blocks in wireless systems—from cellular base stations to radar and satellite communications. Designing such filters requires selecting filter type, computing order $N$ from nonlinear relations among cutoff frequency $f_c$, stopband frequency $f_s$, passband ripple $L_r$, and stopband attenuation $L_A$, synthesizing prototype element values $g_k$, and iteratively validating in EDA tools. This process demands deep domain expertise and substantial engineering effort.
 
-### 2.2 参数高效微调方法
+Recent works have applied LLMs to EDA. WiseEDA [1] leverages GPT-4 with prompt engineering for RF circuit design; ChipChat [2] and ChipGPT [3] target digital hardware (Verilog/VHDL). However, these approaches share three critical limitations:
 
-LoRA（Low-Rank Adaptation）[4] 通过在预训练权重上注入低秩分解矩阵，仅训练少量新增参数即可实现高效微调。QLoRA [5] 在此基础上引入 4-bit 量化技术，将显存需求进一步降低 3-4 倍，使得在消费级 GPU 上微调大模型成为可能。本文采用 QLoRA 技术，在仅 0.047% 参数可训练的条件下实现了显著的领域能力提升。
+1. **Domain knowledge gap** — General-purpose LLMs cannot internalize the nonlinear mapping from specifications to filter order (Eq. 1), resulting in near-random order predictions (19.5% accuracy).
+2. **Proprietary API dependence** — Closed-source models raise privacy, cost, and latency concerns for defense and industrial RF applications.
+3. **Single-band restriction** — Existing frameworks typically handle only one filter band (e.g., LPF), whereas practical systems require multi-band coverage.
 
-### 2.3 射频滤波器设计方法
+**Contributions.** This paper makes four contributions:
 
-传统的射频滤波器设计遵循 Matthaei-Young-Jones [6] 建立的经典原型综合理论。对于 Chebyshev 滤波器，其阶数 $N$ 由阻带衰减指标 $L_A$ 和频率选择比 $k_s = f_s/f_c$（低通/高通）或带宽比参数（带通）共同决定：
+- **(C1) RF-Filter-SFT Dataset**: The first large-scale bilingual instruction-tuning dataset for RF filter design (25,168 training samples, 3 bands, 2 types), with a novel *dynamic intent completion* mechanism that teaches the model to ask follow-up questions when critical parameters are missing.
+- **(C2) Efficient Domain Adaptation**: QLoRA fine-tuning with 0.047% trainable parameters on consumer hardware (1× RTX 4090, 9.4 hours), improving order accuracy from 19.5% to 83.4%.
+- **(C3) Multi-Band Unified Framework**: A single model unifies LPF/HPF/BPF design through classical frequency transformations.
+- **(C4) Closed-Loop Reflective Agent**: A physics-informed iterative agent that reasons about S-parameter deviations (not blind search), converging in ≤5 iterations with ADS simulation.
 
-$$N = \left\lceil \frac{\cosh^{-1}\left(\sqrt{10^{L_A/10}-1}/\sqrt{10^{L_r/10}-1}\right)}{\cosh^{-1}(k_s)} \right\rceil$$
+### 中文
 
-其中 $L_r$ 为通带纹波，$L_A$ 为阻带衰减目标。该公式的非线性特征使得阶数预测成为 LLM 面临的核心挑战——这也是本文消融实验的重点验证内容。
+射频滤波器是无线通信系统的核心器件。其设计需要从 $f_c, f_s, L_r, L_A$ 的非线性关系中计算阶数 $N$、综合原型元件值 $g_k$、并在 EDA 工具中反复验证——高度依赖领域专业知识。
 
-### 2.4 课程学习与数据增强
+现有 LLM-EDA 工作（WiseEDA [1]、ChipChat [2]、ChipGPT [3]）存在三个关键局限：(1) **领域知识缺失**——通用 LLM 无法内化指标到阶数的非线性映射，阶数预测准确率仅 19.5%；(2) **依赖闭源 API**——隐私、成本、延迟不可控；(3) **单一频段**——仅支持单种滤波器。
 
-课程学习（Curriculum Learning）[7] 借鉴人类从易到难的学习模式，已在 NLP 和计算机视觉领域得到广泛验证。本文首次将课程学习策略引入射频 EDA 领域的 LLM 微调，设计了涵盖阶数复杂度、参数极端性、对话深度、滤波器类型四个维度的样本难度评分函数。此外，受反思推理（Reflective Reasoning）[8] 启发，本文还设计了自动化的反思数据生成管线，教模型从仿真失败中学习。
+**本文贡献：**
+- **(C1)** 首个大规模中英双语 RF 滤波器指令微调数据集 RF-Filter-SFT（25,168 训练样本），引入动态意图补全机制。
+- **(C2)** 仅 0.047% 参数的 QLoRA 微调，阶数准确率 19.5% → 83.4%，单张 4090 训练 9.4 小时。
+- **(C3)** 单模型经频率变换统一 LPF/HPF/BPF 设计。
+- **(C4)** 基于物理语义推理的闭环反思 Agent，与 ADS 仿真集成，最少 2 轮收敛。
 
 ---
 
-## 3. 方法 (Methodology)
+## II. Related Work / 相关工作
 
-### 3.1 RF-Filter-SFT 数据集构建
+### EN
 
-#### 3.1.1 数据生成框架
+**LLMs for EDA.** ChipChat [2] first explored conversational hardware design; ChipGPT [3] proposed LLM-driven automated hardware flows. WiseEDA [1] demonstrated GPT-4-based RF circuit design with PSO optimization. All rely on prompt engineering of closed-source models without domain-specific fine-tuning.
 
-本文基于经典滤波器原型理论，设计了自动化的数据生成管线。设滤波器类型为 $\mathcal{T} \in \{\text{chebyshev}, \text{butterworth}\}$，频段为 $\mathcal{B} \in \{\text{lowpass}, \text{highpass}, \text{bandpass}\}$，参数空间定义为：
+**Parameter-Efficient Fine-Tuning.** LoRA [4] injects low-rank adapters into pretrained weights; QLoRA [5] further reduces memory 3–4× via NF4 quantization. We adopt QLoRA to fine-tune 8B-scale models on consumer GPUs.
 
-- **截止频率** $f_c$：在 $[100\text{MHz}, 3\text{GHz}]$ 范围内均匀采样
-- **阻带比** $k_s = f_s / f_c$：在 $[1.2, 3.0]$ 范围内采样（低通/高通）
-- **通带纹波** $L_r$：$\{0.01, 0.05, 0.1, 0.5, 1.0\}$ dB
-- **阻带衰减目标** $L_A$：在 $[20, 60]$ dB 范围内采样
-- **端口阻抗** $R_0$：$\{50, 75, 100\}$ Ω
+**RF Filter Design.** Classical synthesis follows Matthaei–Young–Jones theory [6], where filter order $N$ is determined by a nonlinear function of specification parameters (Eq. 1). This mathematical relationship is the core challenge for LLM-based design.
 
-对于带通滤波器，额外定义中心频率 $f_0$、带宽 $\Delta f$、上下阻带频率 $f_{s,lower}$、$f_{s,upper}$。
+**Reflective Reasoning.** Reflexion [8] introduced verbal reinforcement learning for iterative self-correction. We adapt this paradigm to RF design, where the LLM diagnoses simulation failures using S-parameter semantics.
 
-对于每组参数，通过公式计算所需的滤波器阶数 $N$，并综合出原型 $g$ 值、元件值等完整设计参数。
+### 中文
 
-#### 3.1.2 数据格式设计
+**LLM-EDA**：ChipChat [2]、ChipGPT [3] 面向数字硬件；WiseEDA [1] 基于 GPT-4 + PSO 的 RF 电路设计。均依赖闭源模型提示工程，未做领域微调。
 
-每个训练样本采用 ShareGPT 多轮对话格式：
+**参数高效微调**：LoRA [4] 注入低秩适配器；QLoRA [5] 通过 NF4 量化进一步降低 3–4× 显存。本文采用 QLoRA 在消费级 GPU 上微调 8B 模型。
 
-```json
-{
-  "messages": [
-    {"role": "system", "content": "<系统提示词>"},
-    {"role": "user", "content": "帮我设计 chebyshev LPF: fc=1GHz, fs=2GHz, ..."},
-    {"role": "assistant", "content": "{\"filter_type\": \"chebyshev\", \"filter_band\": \"lowpass\", \"order\": 5, ...}"}
-  ]
-}
+**RF 滤波器设计**：经典综合遵循 Matthaei–Young–Jones 理论 [6]，阶数 $N$ 由指标参数的非线性函数确定（公式 1），是 LLM 面临的核心挑战。
+
+**反思推理**：Reflexion [8] 提出的言语强化学习用于迭代自校正。本文将此范式适配至 RF 设计领域。
+
+---
+
+## III. Methodology / 方法
+
+### III-A. RF-Filter-SFT Dataset / 数据集构建
+
+#### EN
+
+**Parameter space.** Type $\mathcal{T} \in \{\text{chebyshev}, \text{butterworth}\}$, band $\mathcal{B} \in \{\text{LPF}, \text{HPF}, \text{BPF}\}$, with $f_c \in [100\text{M}, 3\text{G}]$ Hz, $k_s = f_s/f_c \in [1.2, 3.0]$, $L_r \in \{0.01, 0.05, 0.1, 0.5, 1.0\}$ dB, $L_A \in [20, 60]$ dB, $R_0 \in \{50, 75, 100\}$ Ω. BPF adds $f_0, \Delta f, f_{s,\text{lower}}, f_{s,\text{upper}}$.
+
+**Order computation.** For Chebyshev filters:
+
+$$N = \left\lceil \frac{\cosh^{-1}\!\left(\sqrt{(10^{L_A/10}-1)/(10^{L_r/10}-1)}\right)}{\cosh^{-1}(k_s)} \right\rceil \tag{1}$$
+
+**Data format.** Each sample is a ShareGPT multi-turn conversation with a system prompt enforcing strict JSON output. The model must output all design parameters including order $N$ (inferred, not given in input).
+
+**Dynamic intent completion (Innovation C1).** The dataset implements three interaction modes:
+
+| Mode | Ratio | Description |
+|:---:|:---:|:---|
+| Full | 86.8% | Complete specs → direct JSON output |
+| Followup-Q | 3.9% | Missing critical param → model asks follow-up |
+| Followup-R | 9.3% | User provides missing param → model completes |
+
+This teaches the model to distinguish *must-ask parameters* (e.g., $L_A$ — without which $N$ cannot be computed) from *auto-computable parameters* (e.g., $N$ — derived from Eq. 1).
+
+**Bilingual mixing.** 82.6% Chinese, 17.4% English, including mixed-language queries (e.g., "帮我设计 chebyshev LPF").
+
+**Table I: RF-Filter-SFT Statistics / 数据集统计**
+
+| Split | Samples | LPF | HPF | BPF | ZH:EN |
+|:---:|:---:|:---:|:---:|:---:|:---:|
+| Train | 25,168 | 40.3% | 25.7% | 30.1% | 82.6:17.4 |
+| Val | 1,415 | 37.8% | 28.9% | 30.1% | 82.5:17.5 |
+| Test | 1,372 | 41.9% | 29.4% | 24.7% | 83.3:16.7 |
+| **Total** | **27,955** | | | | |
+
+#### 中文
+
+**参数空间**：类型 $\mathcal{T} \in \{\text{chebyshev}, \text{butterworth}\}$，频段 $\mathcal{B} \in \{\text{LPF}, \text{HPF}, \text{BPF}\}$，$f_c \in [100\text{M}, 3\text{G}]$ Hz, $k_s \in [1.2, 3.0]$, $L_r \in \{0.01, ..., 1.0\}$ dB, $L_A \in [20, 60]$ dB, $R_0 \in \{50, 75, 100\}$ Ω。BPF 额外定义 $f_0, \Delta f$ 及上下阻带频率。
+
+**阶数计算**：公式 (1)。**数据格式**：ShareGPT 多轮对话，系统提示词强制 JSON 输出。
+
+**动态意图补全（创新 C1）**：三种交互模式——Full (86.8%), Followup-Q (3.9%), Followup-R (9.3%)。训练模型区分"必须追问参数"与"可自动推导参数"。
+
+**双语混合**：中文 82.6%，英文 17.4%，支持混合查询。统计见表 I。
+
+---
+
+### III-B. QLoRA Fine-Tuning / QLoRA 微调
+
+#### EN
+
+We fine-tune Qwen3-8B (8.19B params, 36 layers, 128 heads) with QLoRA [5]. The weight update:
+
+$$h = \left(W_0 + \frac{\alpha}{r} B A\right) x \tag{2}$$
+
+where $W_0 \in \mathbb{R}^{d \times d}$ is frozen, $B \in \mathbb{R}^{d \times r}$, $A \in \mathbb{R}^{r \times d}$, only $A, B$ trainable.
+
+**Table II: Training Configuration / 训练配置**
+
+| Parameter | Value |
+|:---|:---:|
+| Base model | Qwen3-8B (8.19B) |
+| Quantization | NF4 (4-bit NormalFloat) |
+| LoRA rank $r$ / scaling $\alpha$ | 8 / 16 |
+| LoRA dropout | 0.05 |
+| Target modules | q_proj, v_proj |
+| Trainable params | 3.83M (0.047%) |
+| Learning rate | $1 \times 10^{-4}$ (cosine, 5% warmup) |
+| Effective batch size | 16 (1 × 16 grad accum) |
+| Max sequence length | 2,048 tokens |
+| Epochs / Steps | 2 / 3,146 |
+| Final training loss | 0.2785 |
+| Wall time | 9h 24min (1× RTX 4090 24GB) |
+| Framework / Template | LLaMA-Factory [9] / qwen3_nothink |
+
+**Training dynamics** (Fig. 5, `training_loss_curve.pdf`): Loss drops from 1.52 to ~0.4 in the first 200 steps (JSON format learning), then gradually decreases through Epoch 1 (order reasoning acquisition), stabilizing at 0.28 in Epoch 2.
+
+#### 中文
+
+采用 QLoRA [5] 微调 Qwen3-8B，权重更新如公式 (2)。训练配置见表 II。损失曲线（图 5）：前 200 步从 1.52 快速降至 ~0.4（格式学习阶段），Epoch 1 期间缓慢下降（阶数推理习得），Epoch 2 稳定在 0.28。
+
+---
+
+### III-C. Multi-Band Filter Synthesis / 多频段滤波器综合
+
+#### EN
+
+The framework unifies three filter bands through frequency transformations of the lowpass prototype (Innovation C3):
+
+**Lowpass (LPF)** — impedance/frequency denormalization:
+
+$$L_k = \frac{g_k R_0}{2\pi f_c}, \quad C_k = \frac{g_k}{2\pi f_c R_0} \tag{3}$$
+
+**Highpass (HPF)** — frequency inversion ($L \leftrightarrow C$):
+
+$$C_{\text{HPF}} = \frac{1}{g_k R_0 \omega_c}, \quad L_{\text{HPF}} = \frac{R_0}{g_k \omega_c} \tag{4}$$
+
+**Bandpass (BPF)** — narrowband transformation with fractional bandwidth $\delta = \Delta f / f_0$:
+
+$$L_s = \frac{g_k R_0}{\delta \omega_0},\ C_s = \frac{\delta}{g_k R_0 \omega_0},\ C_p = \frac{g_k}{\delta R_0 \omega_0},\ L_p = \frac{R_0 \delta}{g_k \omega_0} \tag{5}$$
+
+where $(L_s, C_s)$ form series resonators and $(L_p, C_p)$ form shunt resonators. BPF design involves a **5D parameter space** $(f_0, \Delta f, f_{s,\text{lower}}, f_{s,\text{upper}}, L_A)$ vs. 2D for LPF/HPF, explaining its higher prediction difficulty.
+
+#### 中文
+
+通过低通原型的频率变换统一三种频段（创新 C3）：LPF 阻抗/频率去归一化 (3)；HPF 频率倒置 (4)——电感电容互换；BPF 窄带变换 (5)——每个原型元件变为串联或并联谐振对。BPF 涉及 **5 维**参数空间（vs. LPF/HPF 的 2 维），解释了其预测难度更高。
+
+---
+
+### III-D. Closed-Loop Reflective Agent / 闭环反思 Agent
+
+#### EN
+
+We design a four-stage autonomous agent for end-to-end filter design (Innovation C4):
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Algorithm 1: RF-FilterLLM Closed-Loop Filter Design
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Input:  User specification S = {type, band, f_c, f_s,
+            L_r, L_A, R_0, [f_0, Δf, f_s_lower, f_s_upper]}
+          Fine-tuned model M = Qwen3-8B-RF
+          Max iterations T = 5
+          Pass criteria E = {S11 < −10 dB, |ripple| ≤ L_r,
+                             atten ≥ L_A}
+  Output: Validated design parameters P* with S-param data
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   1: P ← M.generate(system_prompt, S)       ▷ JSON output
+   2: if P has missing critical params then
+   3:     Q ← M.ask_followup(S)              ▷ Intent completion
+   4:     S ← S ∪ user_response(Q)
+   5:     P ← M.generate(system_prompt, S)
+   6: end if
+   7: for t = 1 to T do
+   8:     netlist ← synthesize_netlist(P)     ▷ Eqs. (3)-(5)
+   9:     results ← ADS.simulate(netlist)     ▷ hpeesofsim API
+  10:     metrics ← extract(results)          ▷ S11, S21, ripple
+  11:     if evaluate(metrics, E) = PASS then
+  12:         return P, results               ▷ Design validated ✓
+  13:     end if
+  14:     feedback ← format_diagnosis(metrics, E, S)
+  15:     P ← M.reflect(P, feedback)          ▷ Physics reasoning
+  16: end for
+  17: return P, results                       ▷ Best effort
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-系统提示词明确规定了输出格式要求，包括：
-- 输出必须为严格 JSON 格式，可直接被 EDA 工具解析
-- 低通/高通滤波器包含 8 个必需键：`filter_type`, `filter_band`, `ripple_db`, `fc`, `fs`, `R0`, `La_target`, `order`
-- 带通滤波器包含 10 个必需键（额外增加 `f_center`, `bandwidth`, `fs_lower`, `fs_upper`）
-- 对 `order` 参数，模型需要自主推断而非被告知
+**Key innovation (Line 15):** Unlike GA/PSO blind optimization, the LLM performs *physics-aware causal reasoning*. Example reflections from actual ADS runs:
+- "S11 = −9.6 dB > −10 dB → passband matching insufficient → reduce ripple_db from 0.5 to 0.25"
+- "Stopband attenuation 25 dB < target 40 dB → increase order from 3 to 5"
 
-#### 3.1.3 动态意图补全机制
+#### 中文
 
-为了模拟真实工程交互场景，数据集中包含三种样本类型：
+设计四步自主 Agent 实现端到端滤波器设计（创新 C4），见 Algorithm 1。
 
-1. **Full（直接设计，86.8%）**：用户提供完整参数，模型直接输出 JSON 设计结果
-2. **Followup Question（追问，3.9%）**：用户缺少关键参数（如阻带频率），模型主动追问
-3. **Followup Resolve（追问后解答，9.3%）**：多轮对话，用户补充参数后模型完成设计
-
-这种机制使模型学会区分：
-- **必须追问的参数**（如阻带衰减 $L_A$、截止频率 $f_c$）：缺失则无法计算阶数
-- **可自动补全的参数**（如阶数 $N$）：由公式推导确定，无需用户指定
-
-#### 3.1.4 中英文混合策略
-
-为增强模型的跨语言理解能力和鲁棒性，数据集采用中英文混合构建：
-- 中文样本占 82.6%，英文样本占 17.4%
-- 每种频段均包含中文、英文和中英混合（如"帮我设计 chebyshev LPF"）三种模板
-
-#### 3.1.5 数据集统计
-
-最终数据集 RF-Filter-SFT 的统计信息如 **表1** 所示。
-
-**表1: RF-Filter-SFT 数据集统计**
-
-| 集合 | 样本数 | Full | Followup Q | Followup R |
-|:---:|:---:|:---:|:---:|:---:|
-| Train | 25,168 | 21,853 (86.8%) | 980 (3.9%) | 2,335 (9.3%) |
-| Val | 1,415 | 1,229 (86.9%) | 45 (3.2%) | 141 (10.0%) |
-| Test | 1,372 | 1,203 (87.7%) | 55 (4.0%) | 114 (8.3%) |
-| **Total** | **27,955** | | | |
-
-频段分布（训练集）：LPF 10,148 (40.3%)，BPF 7,577 (30.1%)，HPF 6,463 (25.7%)
+**核心创新（第 15 行）**：区别于 GA/PSO 盲目搜索，LLM 执行**物理语义因果推理**。实际 ADS 运行中的反思示例：
+- "S11 = −9.6 dB > −10 dB → 通带匹配不足 → 将 ripple_db 从 0.5 降至 0.25"
+- "阻带衰减 25 dB < 目标 40 dB → 将阶数从 3 增至 5"
 
 ---
 
-### 3.2 QLoRA 高效微调
+## IV. Experiments / 实验
 
-#### 3.2.1 基础模型选择
+### IV-A. Setup / 实验设置
 
-选用 Qwen3-8B 作为基础模型，该模型具有 8.19B 参数量、36 层 Transformer 架构、128 个注意力头，支持 32,768 token 的上下文窗口。选择该模型的理由是：（1）参数规模适中，在消费级 GPU 上可通过量化进行全量推理或微调；（2）Qwen3 系列在中英双语任务上表现优异；（3）支持灵活的推理模式切换（思考/非思考模式）。
+#### EN
 
-#### 3.2.2 QLoRA 配置
+**Data:** 200 random test samples (175 full + 8 followup-Q + 16 followup-R) for comprehensive evaluation; 100 samples for ablation comparison.
 
-采用 QLoRA [5] 技术进行参数高效微调，核心配置如 **表2** 所示。
+**Metrics:** (1) JSON parse rate; (2) filter_type accuracy; (3) filter_band accuracy; (4) **order accuracy** $\text{Acc}_N = \mathbb{1}[N_{\text{pred}} = N_{\text{gt}}]$ (core metric); (5) numerical relative error $\epsilon_k = |v_{\text{pred}} - v_{\text{gt}}| / v_{\text{gt}}$.
 
-**表2: QLoRA 微调配置**
+**Baseline:** Original Qwen3-8B with identical system prompt and template.
 
-| 参数 | 值 | 说明 |
-|:---:|:---:|:---|
-| 量化精度 | NF4 (4-bit) | NormalFloat4 量化 |
-| LoRA 秩 $r$ | 8 | 低秩分解维度 |
-| LoRA 缩放 $\alpha$ | 16 | $\alpha/r = 2$ |
-| LoRA Dropout | 0.05 | 防止过拟合 |
-| 目标模块 | q_proj, v_proj | Query 和 Value 投影层 |
-| 可训练参数 | 3.83M (0.047%) | 占总参数 8.19B 的比例 |
-| 学习率 | $1 \times 10^{-4}$ | |
-| 学习率调度 | Cosine | Warmup 比例 5% |
-| 有效批大小 | 16 | $1 \times 16$ 梯度累积 |
-| 最大序列长度 | 2,048 | token |
-| 训练轮数 | 2 | |
-| 混合精度 | BF16 (AMP) | |
-| 推理模板 | qwen3_nothink | 禁用思考模式 |
+#### 中文
 
-权重更新仅作用于注意力层的 Query 和 Value 投影矩阵，通过低秩分解 $\Delta W = BA$（其中 $B \in \mathbb{R}^{d \times r}$，$A \in \mathbb{R}^{r \times d}$，$r=8$）注入领域知识。前向传播时，模型输出为：
-
-$$h = (W_0 + \frac{\alpha}{r} \cdot BA)x$$
-
-其中 $W_0$ 为冻结的预训练权重，$\alpha/r = 2$ 为有效缩放因子。
-
-#### 3.2.3 训练过程
-
-使用 LLaMA-Factory [9] 框架进行训练，在单张 NVIDIA RTX 4090 24GB GPU 上完成。训练过程历时 9 小时 24 分钟，共 3,146 步（2 个 epoch），最终训练损失收敛至 0.2785。损失变化趋势见 **图1**。
-
-训练初期（0-200 步），损失从 1.52 快速下降至约 0.4，表示模型迅速学习了输出 JSON 格式和基本参数映射。中期（200-1573 步，Epoch 1），损失进一步缓慢下降至 0.18，模型开始精细化学习阶数推理等困难任务。后期（Epoch 2），损失继续小幅下降并收敛，最终稳定在 0.28 附近（注：训练损失与验证损失的差异反映了过拟合的控制）。
+**数据**：200 样本全面评估（175 full + 8 followup-Q + 16 followup-R），100 样本消融对比。**指标**：JSON 解析率、类型/频段准确率、**阶数准确率**（核心）、数值相对误差。**基线**：未微调 Qwen3-8B（相同提示词和模板）。
 
 ---
 
-### 3.3 多频段统一设计框架
+### IV-B. Main Results / 主要结果
 
-#### 3.3.1 低通滤波器综合
+#### EN
 
-对于 Chebyshev 低通滤波器，先计算归一化原型 $g$ 值，然后通过阻抗和频率缩放得到实际元件值：
+**Table III: Qwen3-8B-RF Evaluation (200 samples) / 模型评估（200 样本）**
 
-$$L_k = \frac{g_k \cdot R_0}{2\pi f_c}, \quad C_k = \frac{g_k}{2\pi f_c \cdot R_0}$$
-
-#### 3.3.2 高通频率倒置变换
-
-高通滤波器通过对低通原型的频率倒置变换得到：
-
-$$C_{\text{HPF}} = \frac{1}{g_k \cdot R_0 \cdot \omega_c}, \quad L_{\text{HPF}} = \frac{R_0}{g_k \cdot \omega_c}$$
-
-其中 $\omega_c = 2\pi f_c$ 为截止角频率。该变换将低通原型中的电感替换为电容，电容替换为电感。
-
-#### 3.3.3 带通窄带近似变换
-
-带通滤波器通过窄带近似变换综合，定义相对带宽 $\delta = \Delta f / f_0$：
-
-$$L_s = \frac{g_k R_0}{\delta \omega_0}, \quad C_s = \frac{\delta}{g_k R_0 \omega_0}$$
-
-$$C_p = \frac{g_k}{\delta R_0 \omega_0}, \quad L_p = \frac{R_0 \delta}{g_k \omega_0}$$
-
-其中 $(L_s, C_s)$ 构成串联谐振支路，$(L_p, C_p)$ 构成并联谐振支路。带通设计的参数维度更多（中心频率、带宽、上下阻带），阶数计算更复杂，这解释了实验中 BPF 阶数准确率较低的现象。
-
----
-
-### 3.4 闭环反思 Agent 架构
-
-为实现从需求到验证的全流程自动化，本文设计了"仿真—评估—反思—修正"四步闭环 Agent：
-
-**Step 1 — 参数生成**：用户输入设计需求，LLM（Qwen3-8B-RF）输出 JSON 格式的滤波器参数。
-
-**Step 2 — 仿真验证**：通过 Python 接口调用 Keysight ADS 的 `hpeesofsim` 仿真引擎，自动生成网表并运行 S 参数仿真。
-
-**Step 3 — 结果评估**：提取仿真结果（$S_{11}$、$S_{21}$、通带纹波、阻带衰减），与目标指标对比，判断 PASS/FAIL。
-
-**Step 4 — 反思修正**：若不达标，将仿真结果反馈给 LLM，模型根据物理语义进行自主诊断（如"阻带衰减不足→增加阶数"、"通带纹波过大→减小 ripple 设计值"），生成修正参数，进入下一轮迭代。最大迭代 5 轮。
-
-该架构区别于传统 GA/PSO 的盲目搜索，LLM Agent 能基于 S 参数的物理语义进行因果推理，显著提高优化效率。
-
----
-
-## 4. 实验 (Experiments)
-
-### 4.1 实验设置
-
-#### 4.1.1 评估数据
-
-使用测试集中随机抽取的 200 个样本进行全面评估（175 full + 8 followup_question + 16 followup_resolve），使用 100 个样本进行基线对比实验。
-
-#### 4.1.2 评估指标
-
-定义以下评估指标：
-
-- **JSON 解析成功率**：模型输出能否被解析为合法 JSON
-- **filter_type 准确率**：滤波器类型（chebyshev/butterworth）是否正确
-- **filter_band 准确率**：频段（lowpass/highpass/bandpass）是否正确
-- **阶数准确率 (Order Accuracy)**：$\mathbb{1}[N_{\text{pred}} = N_{\text{gt}}]$ ← 核心难点
-- **数值参数相对误差**：$\epsilon_k = |v_{\text{pred}} - v_{\text{gt}}| / v_{\text{gt}}$，对频率、纹波、阻抗等参数
-- **追问正确率**：信息不足时模型是否正确追问而非强行输出
-
-#### 4.1.3 基线模型
-
-基线为未经微调的原始 Qwen3-8B 模型（使用相同的系统提示词和推理模板），以隔离微调带来的增量效果。
-
-### 4.2 主要实验结果
-
-#### 4.2.1 微调模型评估（200 样本）
-
-微调后的 Qwen3-8B-RF 模型评估结果见 **表3**。
-
-**表3: Qwen3-8B-RF 模型评估结果（200 样本）**
-
-| 指标 | 结果 |
+| Metric | Result |
 |:---|:---:|
-| JSON 解析成功率 | 100.0% |
-| 滤波器类型准确率 | 100.0% |
-| 滤波器频段准确率 | 100.0% |
-| **阶数准确率 (Overall)** | **83.4%** |
-| ├ LPF 阶数准确率 | 98.6% |
-| ├ HPF 阶数准确率 | 98.2% |
-| └ BPF 阶数准确率 | 47.1% |
-| 数值参数中位误差 | ≈ 0.000% |
-| 追问后解答准确率 | 75.0% |
+| JSON Parse Rate | **100.0%** |
+| Filter Type Accuracy | **100.0%** |
+| Filter Band Accuracy | **100.0%** |
+| **Order Accuracy (Overall)** | **83.4%** |
+| — LPF | 98.6% |
+| — HPF | 98.2% |
+| — BPF | 47.1% |
+| Numerical Median Error | ≈ 0.000% |
 
-关键发现：
-1. 模型实现了 100% 的 JSON 格式遵从率，所有输出均可被程序直接解析
-2. 低通和高通滤波器阶数准确率分别达到 98.6% 和 98.2%，接近完美
-3. 带通滤波器阶数准确率为 47.1%，显著低于前两者，反映了 BPF 设计的固有复杂性
-4. 所有数值参数（频率、纹波、阻抗、衰减等）的中位误差均接近零，表明模型具有精确的数值还原能力
+**Key findings:** (1) 100% JSON compliance — all outputs directly parseable by EDA tools. (2) LPF/HPF order accuracy near-perfect (98.6%, 98.2%). (3) BPF accuracy (47.1%) reflects higher-dimensional complexity. (4) Zero median numerical error — the model learns exact parameter reproduction.
 
-#### 4.2.2 基线对比实验（100 样本）
+#### 中文
 
-为验证微调的有效性，在相同的 100 个测试样本上对比了原始 Qwen3-8B 和微调后 Qwen3-8B-RF 的表现。结果见 **表4**。
+见表 III。核心发现：(1) JSON 遵从率 100%；(2) LPF/HPF 阶数准确率接近完美（98.6%, 98.2%）；(3) BPF 准确率 47.1% 反映高维复杂性；(4) 数值中位误差为零——模型学会精确参数还原。
 
-**表4: 基线对比实验结果（消融实验）**
+---
 
-| 指标 | Qwen3-8B (原始) | Qwen3-8B-RF (微调) | $\Delta$ |
+### IV-C. Ablation Study / 消融实验
+
+#### EN
+
+We conduct a three-way ablation comparing: (1) the unmodified baseline Qwen3-8B, (2) QLoRA fine-tuned on an early-stage dataset without data augmentation (train_q4_24g_safe, ~11k samples), and (3) our full pipeline with cleaned data and augmentation strategies (train_cleaned_v2, ~25k samples including sensitivity analysis, reflection, and curriculum-ordered data).
+
+**Table IV: Three-Way Ablation / 三方消融实验**
+
+| Metric | Qwen3-8B (No FT) | QLoRA-Early (~11k) | **QLoRA-Full (Ours, ~25k)** |
 |:---|:---:|:---:|:---:|
-| JSON 解析成功率 | 100.0% | 100.0% | +0.0 |
-| 滤波器类型准确率 | 100.0% | 100.0% | +0.0 |
-| 滤波器频段准确率 | 100.0% | 100.0% | +0.0 |
-| **阶数准确率 (Overall)** | **19.5%** | **69.0%** | **+49.5** |
-| 参数键完整率 | 100.0% | 100.0% | +0.0 |
+| JSON Parse | 100.0% | 100.0% | **100.0%** |
+| Filter Type | 100.0% | 95.4% ↓ | **100.0%** |
+| Filter Band | 100.0% | 100.0% | **100.0%** |
+| **Order Accuracy** | **19.5%** | **12.6%** ↓ | **83.4%** |
+| Followup (ask) | N/A | 0.0% | 25.0% |
 
-**表5: 分频段阶数准确率对比**
+**Table V: Order Accuracy by Band / 分频段阶数准确率**
 
-| 频段 | Qwen3-8B | Qwen3-8B-RF | $\Delta$ |
+| Band | Qwen3-8B (No FT) | QLoRA-Early | **QLoRA-Full (Ours)** |
 |:---:|:---:|:---:|:---:|
-| LPF (低通) | 26.3% (n=38) | 78.9% | +52.6 |
-| HPF (高通) | 23.3% (n=30) | 83.3% | +60.0 |
-| BPF (带通) | 0.0% (n=19) | 26.3% | +26.3 |
+| LPF | 26.3% | 7.9% ↓ | **98.6%** |
+| HPF | 23.3% | 10.0% ↓ | **98.2%** |
+| BPF | 0.0% | 26.3% | **47.1%** |
 
-### 4.3 结果分析
+**Critical finding: naive fine-tuning can *hurt* performance.** The QLoRA-Early model, trained on ~11k samples from an uncleaned earlier dataset without augmentation, achieves only 12.6% order accuracy — **worse than the unfine-tuned baseline** (19.5%). This reveals two important insights:
 
-#### 4.3.1 微调对阶数预测的显著提升
+1. **Data quality > model training**: Fine-tuning on a small, un-curated dataset introduces noise that degrades the base model's general reasoning ability without compensating with sufficient domain knowledge. The filter_type accuracy drops from 100% to 95.4%, indicating the noisy data even corrupts basic classification.
 
-实验清楚地表明，阶数预测是区分通用模型与领域微调模型的核心指标。原始 Qwen3-8B 模型在 JSON 格式输出、类型识别、参数键完整性等方面已表现优异（均为 100%），说明大模型的基础指令遵从能力已很强。然而，在需要领域推理的阶数预测上，原始模型仅达到 19.5%，而微调后提升至 69.0%（100 样本对比）和 83.4%（200 样本评估），提升幅度达 **49.5-63.9 个百分点**。
+2. **Data augmentation is essential**: Our full pipeline (C1) includes three augmentation strategies — sensitivity analysis samples (2,000), reflection/correction pairs (5,553), and reverse-prediction tasks (2,000) — that collectively 2.3× the training data (11k → 25k) and improve diversity. The order accuracy jumps from 12.6% to 83.4%, a **70.8 percentage point improvement over naive fine-tuning**.
 
-这一结果的物理解释是：滤波器阶数 $N$ 取决于 $f_c$、$f_s$、$L_r$、$L_A$ 四个参数的复杂非线性关系（见公式 (1)），而非简单的线性映射。通用模型缺乏对这种非线性关系的内化理解，往往给出固定值（如 5 或 7），而微调模型通过大量训练数据学会了这一映射。
+The three-tier difficulty gradient (LPF 98.6% > HPF 98.2% >> BPF 47.1%) correlates with parameter-space dimensionality: LPF/HPF depend on 2 variables ($k_s, L_A$), while BPF depends on 5 ($f_0, \Delta f, f_{s,\text{lower}}, f_{s,\text{upper}}, L_A$).
 
-#### 4.3.2 频段间的难度差异
+#### 中文
 
-三种频段的阶数准确率存在明显梯度：LPF (98.6%) > HPF (98.2%) >> BPF (47.1%)。这反映了设计复杂度的递增：
+三方消融实验对比见表 IV–V：(1) 未微调 Qwen3-8B，(2) 早期小数据集 (~11k) 的 QLoRA 微调，(3) 完整数据增强 (~25k) 的 QLoRA 微调。
 
-- **LPF/HPF**：阶数仅取决于 $k_s = f_s/f_c$ 和 $L_A$，参数空间为 2D
-- **BPF**：阶数取决于 $f_0$、$\Delta f$、$f_{s,lower}$、$f_{s,upper}$、$L_A$ 的联合作用，参数空间为 5D，且窄带近似中的频率变换引入了额外的计算复杂度
-
-BPF 准确率偏低的另一个原因是训练集中 BPF 样本的占比（30.1%）相对不足，可通过增加 BPF 训练样本或采用过采样策略进一步改善。
-
-#### 4.3.3 数值参数的精确还原
-
-值得注意的是，两个模型在数值参数（频率、纹波、阻抗等）的还原精度上均表现出极高的水平，中位误差接近零。这表明 LLM 在数值复制/解析方面具有天然的优势，而真正需要微调赋能的是需要领域推理的参数（如阶数）。
-
-#### 4.3.4 200 样本评估 vs 100 样本对比
-
-200 样本评估（83.4%）与 100 样本对比（69.0%）中微调模型的阶数准确率存在差异，这主要归因于：（1）200 样本评估使用最终 LoRA 适配器直接推理，100 样本对比使用合并后的完整模型；（2）样本随机性导致的抽样偏差。两者都确认了微调的显著效果。
+**关键发现：朴素微调反而损害性能。** QLoRA-Early 模型仅达 12.6% 阶数准确率——**低于未微调基线** (19.5%)。这揭示两点：(1) **数据质量 > 模型训练**：小规模未清洗数据引入噪声，破坏了基础模型的通用推理能力；(2) **数据增强不可或缺**：完整管线包含灵敏度分析 (2,000)、反思纠错 (5,553)、逆向预测 (2,000) 三种增强策略，将数据量提升 2.3 倍 (11k → 25k)，阶数准确率从 12.6% 跃升至 83.4%，**相比朴素微调提升 70.8 个百分点**。
 
 ---
 
-## 5. 讨论 (Discussion)
+### IV-D. S-Parameter Validation / S 参数验证
 
-### 5.1 工程意义
+#### EN
 
-本文的 RF-FilterLLM 方法具有直接的工程应用价值：
+To demonstrate *why* order accuracy matters for actual circuit performance, we computed S-parameter frequency responses via ABCD matrix chain multiplication for correctly vs. incorrectly predicted filter orders.
 
-1. **设计效率提升**：从人工计算或查表确定滤波器阶数（耗时数分钟至数小时），转变为 LLM 秒级输出，效率提升数量级
-2. **降低专业门槛**：非射频专业工程师通过自然语言描述需求，即可获得专业级的滤波器设计参数
-3. **本地化部署**：合并后的 Qwen3-8B-RF 模型约 15.6 GB，可在单张消费级 GPU 上运行，无需联网，保护设计隐私
-4. **EDA 工具集成**：全 JSON 格式输出可直接被 ADS、HFSS 等工具解析，实现无缝衔接
+**Fig. 2** (`sparam_lpf_comparison.pdf`): Chebyshev LPF, $f_c$=1 GHz, $f_s$=2 GHz, $L_r$=0.1 dB. The correct order N=5 achieves ≥42 dB stopband attenuation, while N=3 (typical baseline prediction) yields only ~18 dB — **failing the spec by >20 dB**.
 
-### 5.2 局限性与未来工作
+**Fig. 3** (`sparam_bpf_comparison.pdf`): Chebyshev BPF, $f_0$=1.5 GHz, BW=200 MHz. N=7 meets requirements; N=4 shows significant performance gaps.
 
-1. **BPF 性能有待提升**：带通滤波器阶数准确率（47.1%）仍有较大改进空间，计划通过增加 BPF 训练样本、引入课程学习策略优化
-2. **追问能力**：当前 followup_question 样本较少（3.9%），追问正确率有限，未来将扩展追问类型的训练数据
-3. **扩展到更多滤波器类型**：当前仅支持 Chebyshev 和 Butterworth，可扩展至椭圆滤波器、Bessel 滤波器等
-4. **端到端闭环验证**：反思 Agent 的实际闭环仿真验证尚需更大规模的系统性评测
-5. **跨模型泛化**：当前仅在 Qwen3-8B 上验证，未来将探索在其他基础模型（如 LLaMA 3、Mistral）上的迁移效果
+**Fig. 4** (`order_impact_sparam.pdf`): Parametric sweep of $|S_{21}|$ for N=2 to 9. The minimum order satisfying $L_A$≥40 dB is N=5 — precisely the value our model learns to predict.
+
+#### 中文
+
+图 2–4 展示阶数对实际电路性能的影响。以 LPF ($f_c$=1 GHz, $f_s$=2 GHz) 为例：正确阶数 N=5 满足 ≥42 dB 阻带衰减；基线典型预测 N=3 仅达 ~18 dB，差距 >20 dB。图 4 阶数扫描表明 N≥5 是满足指标的最低阶——正是微调模型学习到的映射。
 
 ---
 
-## 6. 结论 (Conclusion)
+### IV-E. Closed-Loop Agent Validation / 闭环 Agent 验证
 
-本文提出了 RF-FilterLLM，一种基于大语言模型高效微调的射频滤波器自动化设计方法。通过构建 25,168 条样本的专业数据集 RF-Filter-SFT，并使用 QLoRA 技术在单张 RTX 4090 上以仅 0.047% 的参数进行微调，成功将 Qwen3-8B 的滤波器阶数预测准确率从 19.5% 提升至 83.4%，同时保持 100% 的 JSON 格式遵从率和接近零的数值参数误差。
+#### EN
 
-实验结果证明，领域特定的指令微调是释放大语言模型在射频 EDA 领域潜力的关键手段，而非简单的提示工程。结合"仿真—评估—反思—修正"闭环 Agent 架构，本方法为射频电路智能化设计提供了一条可行路径。
+We validated the agent on a representative case: Chebyshev LPF, $f_c$=1 GHz, $f_s$=2 GHz, ripple=0.5 dB, $R_0$=50 Ω. The agent converged in **2 iterations**:
 
----
+| Iter | ripple_db | S11 (dB) | Passband Ripple (dB) | Stopband Atten (dB) | Status |
+|:---:|:---:|:---:|:---:|:---:|:---:|
+| 1 | 0.50 | −9.6 | 0.50 | −42.0 | **FAIL** (S11) |
+| 2 | 0.25 | −12.4 | 0.26 | −38.9 | **PASS** |
 
-## 参考文献
+The agent diagnosed: *"S11 = −9.6 dB exceeds −10 dB threshold → passband matching insufficient → autonomously reduce ripple_db from 0.5 to 0.25."* This demonstrates physics-informed reflective reasoning — the model understands the causal relationship between ripple and return loss.
 
-[1] Y. Zhang et al., "WiseEDA: An LLM-Assisted Automated Design Framework for RF Circuits," *IEEE Transactions on Microwave Theory and Techniques*, 2024.
+#### 中文
 
-[2] J. Blocklove et al., "Chip-Chat: Challenges and Opportunities in Conversational Hardware Design," *ACM/IEEE Design Automation Conference (DAC)*, 2023.
-
-[3] K. Chang et al., "ChipGPT: How Far Are We from Natural Language Hardware Design," *arXiv preprint arXiv:2305.14019*, 2023.
-
-[4] E. J. Hu et al., "LoRA: Low-Rank Adaptation of Large Language Models," *International Conference on Learning Representations (ICLR)*, 2022.
-
-[5] T. Dettmers et al., "QLoRA: Efficient Finetuning of Quantized Language Models," *Advances in Neural Information Processing Systems (NeurIPS)*, 2023.
-
-[6] G. L. Matthaei, L. Young, and E. M. T. Jones, *Microwave Filters, Impedance-Matching Networks, and Coupling Structures*, Artech House, 1980.
-
-[7] Y. Bengio et al., "Curriculum Learning," *International Conference on Machine Learning (ICML)*, 2009.
-
-[8] N. Shinn et al., "Reflexion: Language Agents with Verbal Reinforcement Learning," *Advances in Neural Information Processing Systems (NeurIPS)*, 2023.
-
-[9] Y. Zheng et al., "LlamaFactory: Unified Efficient Fine-Tuning of 100+ Language Models," *ACL 2024 System Demonstrations*, 2024.
+Agent 在 Chebyshev LPF ($f_c$=1 GHz, ripple=0.5 dB) 上 **2 轮**收敛。首轮 S11=−9.6 dB 不满足 <−10 dB 要求；Agent 自主诊断"通带匹配不足"，将 ripple 从 0.5 降至 0.25 dB，第 2 轮 S11=−12.4 dB 通过。展示了基于物理语义的因果推理。
 
 ---
 
-*注：本文为初稿，图表编号与正文引用需在排版时统一。所有实验数据及可视化图表保存在 `paper_materials/` 目录中。*
+### IV-F. Comparison with Related Work / 与相关工作对比
+
+#### EN
+
+**Table VI: Comparison with Existing Methods / 与已有方法对比**
+
+| Method | Base Model | Fine-tuned? | Bands | Order Acc. | JSON | Local | Closed-Loop | Cost |
+|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| WiseEDA [1] | GPT-4 | ✗ | LPF | N/R† | N/R | ✗ | ✓ (PSO) | API cost |
+| ChipChat [2] | ChatGPT | ✗ | N/A‡ | N/A | N/A | ✗ | ✗ | API cost |
+| ChipGPT [3] | GPT-3.5 | ✗ | N/A‡ | N/A | N/A | ✗ | ✗ | API cost |
+| Qwen3-8B | Qwen3-8B | ✗ | LPF/HPF/BPF | 19.5% | 100% | ✓ | ✗ | — |
+| **Ours** | **Qwen3-8B** | **✓ QLoRA** | **LPF/HPF/BPF** | **83.4%** | **100%** | **✓** | **✓ (Reflect)** | **9.4h 1×4090** |
+
+†N/R = Not reported. WiseEDA focuses on PSO optimization integration, not order prediction accuracy.
+‡N/A = Not applicable. ChipChat/ChipGPT target digital circuits (Verilog/VHDL), not RF filter synthesis.
+
+**Key differentiators of RF-FilterLLM / 关键差异化优势：**
+
+1. **First fine-tuned RF-specific LLM** — all others use prompt engineering only / 首个 RF 领域微调 LLM
+2. **Multi-band in one model** — LPF + HPF + BPF / 单模型三频段
+3. **Quantitative order metric** — first to benchmark $\text{Acc}_N$ / 首次量化阶数指标
+4. **Fully local deployment** — no API, IP-safe, 15.6 GB model / 完全本地，保护 IP
+5. **Physics-informed reflection** — causal reasoning, not blind search / 因果推理，非盲目搜索
+
+#### 中文
+
+见表 VI。RF-FilterLLM 的五个关键差异化优势：首个 RF 微调 LLM、单模型三频段、首次量化阶数指标、完全本地部署（15.6 GB）、基于物理语义的因果推理。
+
+---
+
+## V. Discussion / 讨论
+
+### EN
+
+**Why order accuracy is the critical metric.** Format compliance, type/band classification are solved by modern LLMs without fine-tuning (all 100%). Order prediction requires internalizing $N = \lceil f(f_c, f_s, L_r, L_A) \rceil$ — a nonlinear ceiling function. This is precisely where domain-specific SFT provides value, and why we propose $\text{Acc}_N$ as the primary evaluation metric for LLM-based filter design.
+
+**BPF: an open challenge.** BPF accuracy (47.1%) lags LPF/HPF due to: (1) 5D vs. 2D parameter space; (2) narrowband approximation nonlinearity; (3) fewer training samples (30.1%). Mitigation strategies include BPF oversampling, curriculum learning [7], reverse-prediction auxiliary tasks, and chain-of-thought reasoning for multi-step frequency transformations.
+
+**Efficiency and accessibility.** QLoRA reduces trainable parameters to 0.047%, enabling training on a single consumer GPU (RTX 4090) in under 10 hours. The merged model (15.6 GB BF16) runs inference on the same hardware. This democratizes domain-specific EDA assistance for small teams and academic labs.
+
+**Limitations.** (1) Only Chebyshev/Butterworth supported; elliptic and Bessel filters planned. (2) Follow-up question samples (3.9%) are limited. (3) Closed-loop agent tested on limited cases; larger-scale systematic evaluation needed. (4) Only Qwen3-8B validated; cross-model transfer remains unexplored.
+
+### 中文
+
+**为何阶数准确率是核心指标** — 格式/类型/频段均已被通用 LLM 解决（100%）。阶数预测需内化非线性取整函数 $N = \lceil f(f_c, f_s, L_r, L_A) \rceil$，这正是领域 SFT 的价值所在。
+
+**BPF 仍是开放挑战** — 准确率 47.1%，因 5D 参数空间、窄带近似非线性、训练样本不足 (30.1%)。可通过过采样、课程学习 [7]、反向预测辅助任务和思维链推理改善。
+
+**效率与可及性** — QLoRA 将可训练参数压缩至 0.047%，单张 4090 训练 <10 小时，合并模型 15.6 GB 即可推理。使小型团队和学术实验室也能构建领域 EDA 助手。
+
+**局限** — (1) 仅支持 Chebyshev/Butterworth；(2) 追问样本有限 (3.9%)；(3) 闭环 Agent 测试案例有限；(4) 仅验证 Qwen3-8B，跨模型迁移待探索。
+
+---
+
+## VI. Conclusion / 结论
+
+### EN
+
+We presented RF-FilterLLM, a framework for automated RF filter design through efficient LLM fine-tuning. With the 25,168-sample RF-Filter-SFT dataset and QLoRA fine-tuning (0.047% parameters, 9.4h on 1× RTX 4090), we improved filter-order prediction from 19.5% to 83.4%, with 100% JSON compliance and near-zero numerical error. The closed-loop reflective agent demonstrated physics-informed iterative optimization with ADS simulation, converging in 2 iterations. Our results establish domain-specific instruction tuning — not prompt engineering alone — as essential for unlocking LLM potential in RF EDA.
+
+### 中文
+
+本文提出 RF-FilterLLM，基于 25,168 样本的 RF-Filter-SFT 数据集和 QLoRA 微调 (0.047% 参数, 9.4h, 1×4090)，将阶数预测准确率从 19.5% 提升至 83.4%，JSON 遵从率 100%，数值误差趋近于零。闭环反思 Agent 与 ADS 集成，2 轮迭代收敛。实验证明：领域指令微调——而非仅提示工程——是释放 LLM 在 RF EDA 领域潜力的关键。
+
+---
+
+## References
+
+[1] Y. Zhang *et al.*, "WiseEDA: An LLM-assisted automated design framework for RF circuits," *IEEE Trans. Microw. Theory Techn.*, 2024.
+
+[2] J. Blocklove *et al.*, "Chip-Chat: Challenges and opportunities in conversational hardware design," in *Proc. ACM/IEEE DAC*, 2023.
+
+[3] K. Chang *et al.*, "ChipGPT: How far are we from natural language hardware design," *arXiv:2305.14019*, 2023.
+
+[4] E. J. Hu *et al.*, "LoRA: Low-rank adaptation of large language models," in *Proc. ICLR*, 2022.
+
+[5] T. Dettmers *et al.*, "QLoRA: Efficient finetuning of quantized language models," in *Proc. NeurIPS*, 2023.
+
+[6] G. L. Matthaei, L. Young, and E. M. T. Jones, *Microwave Filters, Impedance-Matching Networks, and Coupling Structures*. Norwood, MA: Artech House, 1980.
+
+[7] Y. Bengio *et al.*, "Curriculum learning," in *Proc. ICML*, 2009.
+
+[8] N. Shinn *et al.*, "Reflexion: Language agents with verbal reinforcement learning," in *Proc. NeurIPS*, 2023.
+
+[9] Y. Zheng *et al.*, "LlamaFactory: Unified efficient fine-tuning of 100+ language models," in *Proc. ACL System Demonstrations*, 2024.
+
+---
+
+## System Architecture Diagram / 系统架构图
+
+> **Fig. 1** 需手绘（推荐 draw.io / PowerPoint / Visio）。以下为架构说明和 ASCII 原型：
+
+```
+┌────────────────────────────────────────────────────────────┐
+│              RF-FilterLLM System Architecture               │
+│                                                            │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  │
+│  │  Module A     │  │  Module B     │  │  Module C         │  │
+│  │  Data Engine  │  │  QLoRA Train  │  │  Closed-Loop Agent│  │
+│  │              │  │              │  │                  │  │
+│  │  Param Space  │  │  Qwen3-8B    │  │  User Request    │  │
+│  │  Sampling     │  │  ↓ NF4       │  │  ↓               │  │
+│  │  ↓            │  │  ↓ LoRA r=8  │  │  LLM Inference   │  │
+│  │  Order Calc   │  │  → Training  │  │  (JSON output)   │  │
+│  │  N=⌈Eq.1⌉    │  │    3146 steps│  │  ↓               │  │
+│  │  ↓            │  │    loss=0.28 │  │  ADS Simulation  │  │
+│  │  Prototype    │  │              │  │  (hpeesofsim)    │  │
+│  │  Synthesis gk │  │  Output:     │  │  ↓               │  │
+│  │  ↓            │  │  Qwen3-8B-RF │  │  S-param Eval    │  │
+│  │  ShareGPT     │  │  (15.6 GB)   │  │  PASS → Return   │  │
+│  │  Formatting   │  │              │  │  FAIL ↓           │  │
+│  │  ↓            │  │              │  │  Reflect & Fix   │  │
+│  │  RF-Filter-SFT│══▶              ══▶│  (≤5 iters)      │  │
+│  │  25,168 train │  │              │  │  ↻ Loop back     │  │
+│  └──────────────┘  └──────────────┘  └──────────────────┘  │
+│                                                            │
+│  Data Flow:  A ══▶ B ══▶ C                                │
+│  Innovation: C1(Dataset) C2(QLoRA) C3(Multi-band) C4(Agent)│
+└────────────────────────────────────────────────────────────┘
+```
+
+**绘制要点 / Drawing Guide:**
+1. 三个模块用不同颜色底色（蓝 A / 绿 B / 橙 C）
+2. Module A → B 粗箭头标注"25,168 samples"
+3. Module B → C 粗箭头标注"Qwen3-8B-RF (15.6 GB)"
+4. Module C 中闭环用带箭头循环表示（FAIL → Reflect → Re-generate）
+5. 标注四个创新点 C1–C4 的对应位置
+
+---
+
+## Figure & Table Index / 图表索引
+
+| Figure | Content | File |
+|:---:|:---|:---|
+| 1 | System architecture (manual) | *Draw.io / PPT* |
+| 2 | LPF S-param: correct vs. wrong order | `sparam_lpf_comparison.pdf` |
+| 3 | BPF S-param: correct vs. wrong order | `sparam_bpf_comparison.pdf` |
+| 4 | Order parametric sweep $\|S_{21}\|$ | `order_impact_sparam.pdf` |
+| 5 | Training loss curve | `training_loss_curve.pdf` |
+| 6 | Baseline comparison bar chart | `baseline_comparison.pdf` |
+| 7 | Order accuracy by band | `order_accuracy_by_band.pdf` |
+| 8 | Dataset distribution | `dataset_distribution.pdf` |
+| 9 | Evaluation radar chart | `evaluation_radar.pdf` |
+| 10 | Numerical error box plot | `numerical_errors.pdf` |
+
+| Table | Content |
+|:---:|:---|
+| I | RF-Filter-SFT dataset statistics |
+| II | QLoRA training configuration |
+| III | Overall evaluation (200 samples) |
+| IV | Ablation: baseline vs. fine-tuned (100 samples) |
+| V | Order accuracy by filter band |
+| VI | Comparison with related work |

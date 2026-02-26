@@ -5,8 +5,6 @@ r"""
 目的：
   基于仿真结果自动生成"参数→仿真→评估→反思调参"的多轮对话 SFT 数据，
   让微调后的模型具备射频调参直觉。
-
-运行（需要 ADS Python 环境）：
   & "F:/Program Files (x86)/ADS2026/tools/python/python.exe" generate_reflection_dataset.py
 
 不依赖 ADS 的纯计算模式（仅基于公式，不调 ADS 仿真）：
