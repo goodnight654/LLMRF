@@ -1,5 +1,0 @@
-bitsandbytes
-llamafactory
-peft
-sentence-transformers
-transformers
