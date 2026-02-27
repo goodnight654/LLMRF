@@ -1,0 +1,6 @@
+﻿Method,Fine-tuned,Bands,Acc_N(%),Local_Deploy,Closed_Loop,Training_Cost
+WiseEDA,No,LPF,N/R,No,PSO,API
+ChipChat,No,N/A,N/A,No,No,API
+ChipGPT,No,N/A,N/A,No,No,API
+Baseline(Qwen3-8B),No,3,19.5,Yes,No,-
+RF-FilterLLM(Ours),Yes,3,83.4,Yes,Reflective,9.4h

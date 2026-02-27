@@ -1,0 +1,10 @@
+﻿Metric,No_FT,QLoRA_Early,RF_FilterLLM
+JSON Parse Rate,100%,100%,100%
+Filter Type Accuracy,100%,95.4%,100%
+Filter Band Accuracy,100%,100%,100%
+Order Acc (overall),19.5%,12.6%,83.4%
+Order Acc LPF,26.3%,7.9%,98.6%
+Order Acc HPF,23.3%,10.0%,98.2%
+Order Acc BPF,0.0%,26.3%,47.1%
+Follow-up Ask Rate,N/A,0.0%,25.0%
+Multi-turn Order Acc,N/A,0.0%,75.0%

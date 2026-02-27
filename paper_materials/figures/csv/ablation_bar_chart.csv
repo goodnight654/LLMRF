@@ -1,0 +1,4 @@
+﻿Model,LPF_order_acc,HPF_order_acc,BPF_order_acc,Overall_order_acc,Followup_ask_rate,Multi_turn_order_acc
+No_FT (Qwen3-8B),26.3,23.3,0.0,19.5,,
+QLoRA-Early (11k uncleaned),7.9,10.0,26.3,12.6,0.0,0.0
+RF-FilterLLM (25k augmented),98.6,98.2,47.1,83.4,25.0,75.0

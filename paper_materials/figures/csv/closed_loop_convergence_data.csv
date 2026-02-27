@@ -1,0 +1,3 @@
+iteration,S11_max_dB,passband_ripple_dB,passed
+1,-9.625,0.5,False
+2,-12.375,0.25,True
