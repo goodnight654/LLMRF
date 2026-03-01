@@ -1,0 +1,243 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage[T1]{fontenc}
+\usepackage{mathptmx}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage{pifont}
+\newcommand{\cmark}{\ding{51}}
+\newcommand{\xmark}{\ding{55}}
+
+% Tighten figure/table spacing
+\setlength{\textfloatsep}{4pt plus 2pt minus 2pt}
+\setlength{\floatsep}{4pt plus 2pt minus 2pt}
+\setlength{\intextsep}{4pt plus 2pt minus 2pt}
+\setlength{\abovecaptionskip}{0pt}
+\setlength{\belowcaptionskip}{0pt}
+
+\begin{document}
+
+\title{RF-FilterLLM: Automated RF Filter Design via\\Domain-Specific Fine-Tuning of LLM}
+
+\author{
+\IEEEauthorblockN{Wenlong Sun, Jian Pang}
+\IEEEauthorblockA{State Key Laboratory of Radio Frequency Heterogeneous Integration, Shanghai Jiao Tong University,\\
+No.800, Dongchuan Road, Shanghai, 200240, China\\
+pangjian@sjtu.edu.cn}
+}
+
+\maketitle
+
+\begin{abstract}
+This paper presents RF-FilterLLM, a framework that automates radio-frequency ladder-filter design by fine-tuning a large language model (LLM) on domain-specific data. We construct a bilingual instruction-tuning dataset, RF-Filter-SFT (25{,}168 samples), covering Chebyshev Type-I lowpass, highpass, and bandpass topologies.  Three data-augmentation pipelines---perturbation-induced reflection (PIR), bidirectional performance prediction (BPP), and sensitivity-guided tuning---supply the model with self-diagnostic and reverse-engineering training signals.  With QLoRA~\cite{qlora} on a single RTX~4090 (3.83\,M trainable parameters, 9.4\,h), the resulting model raises filter-order prediction accuracy from 19.5\% to 83.4\% while maintaining 100\% JSON-format compliance and near-zero numerical error.  In practice, a closed-loop agent coupling the model with Keysight ADS via ABCD-matrix sensitivity analysis~\cite{matthaei} converges within two iterations.  Ablation experiments further show that na\"ive fine-tuning on unaugmented data actually \emph{lowers} accuracy below the untuned baseline, underscoring the necessity of the proposed data pipelines.
+\end{abstract}
+
+\begin{IEEEkeywords}
+LLM, RF filter design, domain-specific fine-tuning, instruction tuning, EDA automation, closed-loop agent
+\end{IEEEkeywords}
+
+%=====================================================================
+\section{Introduction}
+%=====================================================================
+
+Lumped-element RF filters are a fundamental building block in receiver front-ends, transmitters, and frequency-multiplexing networks.  Designing such a filter involves (i)~computing the minimum order~$N$ that satisfies nonlinear constraints on cutoff frequency~$f_c$, stopband edge~$f_s$, passband ripple~$L_r$, and stopband attenuation~$L_A$; (ii)~synthesizing prototype element values; and (iii)~validating the design through electromagnetic or circuit simulation.  Among these, steps~(i) and~(iii) are inherently iterative and demand considerable microwave-engineering expertise.
+
+This paper presents RF-FilterLLM, a locally deployable framework that fine-tunes an open-source LLM for multi-band Chebyshev ladder-filter design.  The main contributions are:
+\begin{enumerate}
+\item A bilingual instruction-tuning dataset (RF-Filter-SFT, 25{,}168 samples across LPF/HPF/BPF) with three task-specific augmentation pipelines and a missing-parameter completion mechanism.
+\item A QLoRA training recipe that adapts the model on a single consumer GPU in 9.4\,h, raising order-prediction accuracy from 19.5\% to 83.4\%.
+\item A unified frequency-transformation scheme that enables a single model to handle three filter bands.
+\item A sensitivity-guided reflective agent that couples the LLM with Keysight ADS through ABCD-matrix perturbation analysis for closed-loop design refinement.
+\end{enumerate}
+
+%=====================================================================
+\section{Methodology}
+%=====================================================================
+As illustrated in Fig.~\ref{fig:arch}, the framework operates in three stages: (1)~dataset construction with augmentation, (2)~QLoRA fine-tuning~\cite{qlora,lora} of the backbone LLM implemented via LlamaFactory~\cite{llamafactory}, and (3)~closed-loop validation through an EDA-coupled agent.
+
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\columnwidth]{figures/config.png}
+\caption{Three-stage pipeline of the RF-FilterLLM framework: dataset construction with augmentation, QLoRA fine-tuning, and closed-loop ADS validation.}
+\label{fig:arch}
+\end{figure}
+
+
+
+\subsection{Dataset Construction and Augmentation}
+
+The RF-Filter-SFT dataset covers Chebyshev LPF, HPF, and BPF with $f_c\!\in\![100\text{M},3\text{G}]$\,Hz, $k_s\!\in\![1.2,3.0]$, $L_r\!\in\![0.01,1.0]$\,dB, $L_A\!\in\![20,60]$\,dB, and $R_0\!\in\!\{50,75,100\}\,\Omega$. The minimum required order is given by:
+\begin{equation}
+N = \left\lceil \frac{\cosh^{-1}\!\left(\sqrt{(10^{L_A/10}\!-\!1)/(10^{L_r/10}\!-\!1)}\right)}{\cosh^{-1}(k_s)} \right\rceil
+\label{eq:order}
+\end{equation}
+Each sample is formatted as a multi-turn conversation~\cite{ouyang} with strict JSON output. A \emph{dynamic intent completion} mechanism triggers follow-up questions whenever critical parameters are missing (3.9\% of samples). Table~\ref{tab:dataset} summarizes the dataset statistics.
+
+\begin{table}[h]
+\centering
+\caption{RF-Filter-SFT Dataset Statistics}
+\label{tab:dataset}
+\begin{tabular}{lccccc}
+\toprule
+Split & Samples & LPF & HPF & BPF & ZH:EN \\
+\midrule
+Train & 25,168 & 40.3\% & 25.7\% & 30.1\% & 82.6:17.4 \\
+Val   & 1,415  & 37.8\% & 28.9\% & 30.1\% & 82.5:17.5 \\
+Test  & 1,372  & 41.9\% & 29.4\% & 24.7\% & 83.3:16.7 \\
+\midrule
+\textbf{Total} & \textbf{27,955} & & & & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three augmentation pipelines supplement the base data.  \textbf{Perturbation-induced reflection (PIR)} generates ``fail$\to$diagnose$\to$fix'' training examples: controlled deviations are injected into correct designs, and a rule-based engine produces quantitative diagnostic chains.  \textbf{Bidirectional performance prediction (BPP)} introduces reverse-direction tasks---predicting performance from element values and selecting between candidate designs.  \textbf{Curriculum-ordered training}~\cite{curriculum} arranges samples by a composite difficulty score (order complexity, parameter extremity, and band type) with intra-bucket shuffling to avoid degenerate orderings.
+
+\subsection{Multi-Band Filter Synthesis}
+
+All filters adopt the \textbf{Type-I ladder topology}~\cite{matthaei}, where $g_1$ is a series inductor, $g_2$ a shunt capacitor, with subsequent elements alternating in kind.  Three bands are realized via standard frequency transformations~\cite{matthaei,pozar}: direct denormalization (LPF), $L\!\leftrightarrow\!C$ inversion (HPF), and narrowband coupling ($\delta\!=\!\Delta f/f_0$) that maps each element to a resonator pair (BPF), expanding the parameter space from 2D to 5D.
+
+By design, the LLM is responsible for predicting the filter order~$N$ and high-level specification parameters, while element values ($L_k$, $C_k$) are computed deterministically from the Chebyshev prototype through $g_k$-to-component formulas~\cite{matthaei,pozar}.  This separation guarantees electrical correctness by construction.
+
+\subsection{Sensitivity-Guided Reflective Agent}
+
+The closed-loop agent couples RF-FilterLLM with Keysight ADS.  Whenever a simulation run fails to meet the specifications, element-wise sensitivity is computed via ABCD-matrix perturbation:
+\begin{equation}
+S_{x_i}^{m} = \frac{m(x_i(1\!+\!\delta)) - m(x_i)}{m(x_i) \cdot \delta},\quad \delta = 1\%
+\label{eq:sens}
+\end{equation}
+Elements are then ranked by impact score, and the resulting report is fed back to the LLM~\cite{reflexion}, narrowing the correction search space from $O(N)$ to $O(k)$ ($k\!\ll\!N$). Algorithm~\ref{alg:agent} outlines this procedure.
+
+\begin{algorithm}[h]
+\caption{RF-FilterLLM Closed-Loop Design}
+\label{alg:agent}
+\begin{algorithmic}[1]
+\REQUIRE Specification $S$, max iterations $T$, pass criteria $E$
+\ENSURE Validated design $P^*$
+\STATE $P \leftarrow \text{RF-FilterLLM.generate}(S)$
+\FOR{$t = 1$ to $T$}
+  \STATE $R \leftarrow \text{ADS.simulate}(P)$
+  \IF{$\text{evaluate}(R, E) = \text{PASS}$}
+    \RETURN $P, R$
+  \ENDIF
+  \STATE $\sigma \leftarrow \text{ABCD\_sensitivity}(P)$ \COMMENT{Eq.~\eqref{eq:sens}}
+  \STATE $P \leftarrow \text{RF-FilterLLM.reflect}(P, R, \sigma)$
+\ENDFOR
+\RETURN $P, R$
+\end{algorithmic}
+\end{algorithm}
+
+%=====================================================================
+\section{Experiments}
+%=====================================================================
+
+\subsection{Results and Ablation}
+
+We evaluate RF-FilterLLM on 199 test samples (175~full, 8~follow-up-Q, 16~follow-up-R) using filter-order prediction accuracy ($\text{Acc}_N$) as the primary metric. Table~\ref{tab:ablation} compares three configurations: (1)~the untuned backbone, (2)~fine-tuning on $\sim$11k uncleaned samples without augmentation (QLoRA-Early), and (3)~RF-FilterLLM trained with our full pipeline.
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.8\columnwidth]{figures/order_scatter.png}
+\caption{Per-sample order-prediction results (175~test instances). Points on the dashed diagonal are correct. Red-edged markers indicate errors; BPF triangles show systematic under-prediction.}
+\label{fig:scatter}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\caption{Three-Way Ablation Study}
+\label{tab:ablation}
+\begin{tabular}{lccc}
+\toprule
+Metric & No FT & QLoRA-Early & \textbf{RF-FilterLLM} \\
+\midrule
+Order Acc. (overall) & 19.5\% & 12.6\%\,$\downarrow$ & \textbf{83.4\%} \\
+\quad-- LPF & 26.3\% & 7.9\% & \textbf{98.6\%} \\
+\quad-- HPF & 23.3\% & 10.0\% & \textbf{98.2\%} \\
+\quad-- BPF & 0.0\% & 26.3\% & \textbf{47.1\%} \\
+Follow-up Ask Rate & N/A & 0.0\% & \textbf{25.0\%} \\
+Multi-turn Order Acc. & N/A & 0.0\% & \textbf{75.0\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+RF-FilterLLM achieves 83.4\% overall order accuracy with 100\% JSON compliance and 100\% type/band accuracy. LPF (98.6\%) and HPF (98.2\%) reach near-perfect levels, while BPF (47.1\%) lags behind---consistent with its larger parameter space. Notably, na\"ive fine-tuning on the uncleaned dataset \emph{lowers} order accuracy to 12.6\%, which is below even the untuned baseline of 19.5\%.  Incorporating PIR, BPP, and curriculum ordering restores and surpasses the baseline by 63.9 percentage points, confirming that the augmentation pipelines are the primary driver of the performance gain.
+
+Fig.~\ref{fig:scatter} plots per-sample predictions for all 175~test instances: LPF and HPF cluster tightly along the diagonal, whereas BPF exhibits a systematic under-prediction tendency.  To illustrate the practical impact, Fig.~\ref{fig:sparam} shows S-parameter responses for a Chebyshev LPF ($f_c\!=\!1$\,GHz, $f_s\!=\!2$\,GHz, $L_r\!=\!0.1$\,dB, $L_A\!=\!30$\,dB, $N_{\min}\!=\!5$).  Panel~(a) reveals that predicting $N\!=\!4$ yields only 23\,dB of stopband rejection---7\,dB short of the specification---while $N\!=\!3$ misses by 18\,dB; panel~(b) shows the corresponding $S_{11}$ degradation in passband matching.
+
+Fig.~\ref{fig:closedloop} demonstrates the closed-loop refinement capability.  The reflective agent converged in \textbf{2~iterations}: the first simulation pass with $L_r\!=\!0.5$\,dB returned $S_{11}\!=\!-9.6$\,dB (fail); the model identified insufficient passband matching as the root cause, reduced $L_r$ to 0.25\,dB, and the second pass achieved $S_{11}\!=\!-12.4$\,dB (pass).
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{figures/sparam_spec_impact.png}
+
+
+
+
+\caption{Impact of order-prediction error on a Chebyshev LPF ($f_c\!=\!1$\,GHz, $L_A\!=\!30$\,dB, $N_{\min}\!=\!5$). (a)~$|S_{21}|$: $N\!=\!4$ falls 7\,dB short; $N\!=\!3$ misses by 18\,dB. (b)~$|S_{11}|$: lower orders show worse passband matching.}
+\label{fig:sparam}
+\end{figure}
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{figures/sparam_closedloop_iter.pdf}
+\caption{Closed-loop convergence of the reflective agent on a Chebyshev LPF ($N\!=\!5$, $f_c\!=\!1$\,GHz). (a)~$|S_{21}|$ response comparison. (b)~$|S_{11}|$: reducing $L_r$ from 0.5 to 0.25\,dB improves $S_{11}$ from $-9.6$\,dB (fail) to $-12.4$\,dB (pass).}
+\label{fig:closedloop}
+\end{figure}
+
+
+\subsection{Comparison with Related Work}
+
+Several recent studies have explored LLMs for EDA tasks.  WiseEDA~\cite{wiseeda} employs GPT-4 with particle-swarm optimization for RF circuit sizing, ChipChat~\cite{chipchat} investigates conversational HDL generation, and ChipGPT~\cite{chipgpt} examines prompt-driven digital design.  All three share key limitations: reliance on closed-source cloud APIs, absence of quantitative accuracy metrics, and restriction to single-band or non-analog tasks.  
+
+RF-FilterLLM addresses these gaps by fine-tuning an open-source model locally---eliminating API costs and privacy concerns---while delivering a reproducible order-accuracy benchmark (83.4\%, a 63.9-point gain over the untuned baseline).  The physics-informed closed-loop agent further replaces heuristic trial-and-error with ABCD-matrix sensitivity feedback, converging in two ADS iterations.  Table~\ref{tab:compare} summarizes the comparison.  To the best of our knowledge, RF-FilterLLM is the first fine-tuned, locally deployable LLM covering LPF, HPF, and BPF with quantitative evaluation and an integrated simulation agent.
+
+\begin{table}[h]
+\centering
+\caption{Comparison with Existing Methods}
+\label{tab:compare}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lcccccc}
+\toprule
+Method & FT? & Bands & Acc$_N$ & Local & Loop & Cost \\
+\midrule
+WiseEDA~\cite{wiseeda} & \xmark & LPF & N/R & \xmark & PSO & API \\
+ChipChat~\cite{chipchat} & \xmark & N/A & N/A & \xmark & \xmark & API \\
+ChipGPT~\cite{chipgpt} & \xmark & N/A & N/A & \xmark & \xmark & API \\
+Baseline & \xmark & 3 & 19.5 & \cmark & \xmark & -- \\
+\textbf{RF-FilterLLM} & \cmark & \textbf{3} & \textbf{83.4} & \cmark & \textbf{Refl.} & \textbf{9.4h} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%=====================================================================
+\section{Conclusion}
+%=====================================================================
+
+This paper has presented RF-FilterLLM, a framework that fine-tunes an open-source LLM for automated Chebyshev ladder-filter design.  Trained on the RF-Filter-SFT dataset (25{,}168 samples) enriched by PIR, BPP, and curriculum-ordered training~\cite{curriculum}, the QLoRA-adapted model~\cite{qlora} raises order-prediction accuracy from 19.5\% to 83.4\% with full output compliance.  A sensitivity-guided agent further couples the model with Keysight ADS, converging within two iterations.
+
+Several limitations should be noted.  BPF order accuracy (47.1\%) remains considerably lower than that of LPF and HPF, owing to the expanded 5D parameter space; targeted oversampling and specialized augmentation strategies will be necessary to close this gap.  In addition, the current input schema only supports Chebyshev lowpass, highpass, and bandpass specifications and does not yet generalize to other filter families (e.g., elliptic, inverse Chebyshev) or microstrip implementations.  Future work will focus on BPF-targeted data balancing, extension to additional filter topologies, a more flexible natural-language input interface, and transfer across model architectures.
+
+\section*{Acknowledgment}
+This work was supported by the National Natural Science Foundation of China under Grants 62371296 and 62188102, and by the State Key Laboratory of Radio Frequency Heterogeneous Integration (Independent Scientific Research Program No. 2025017-SJTU).
+
+\begin{thebibliography}{00}
+\bibitem{qlora} T.~Dettmers \emph{et al.}, ``QLoRA: Efficient finetuning of quantized language models,'' in \emph{Proc. NeurIPS}, 2023.
+\bibitem{matthaei} G.~L.~Matthaei, L.~Young, and E.~M.~T.~Jones, \emph{Microwave Filters, Impedance-Matching Networks, and Coupling Structures}.\hskip 1em plus 0.5em minus 0.4em Norwood, MA: Artech House, 1980.
+\bibitem{lora} E.~J.~Hu \emph{et al.}, ``LoRA: Low-rank adaptation of large language models,'' in \emph{Proc. ICLR}, 2022.
+\bibitem{llamafactory} Y.~Zheng \emph{et al.}, ``LlamaFactory: Unified efficient fine-tuning of 100+ language models,'' in \emph{Proc. ACL System Demonstrations}, 2024.
+\bibitem{ouyang} L.~Ouyang \emph{et al.}, ``Training language models to follow instructions with human feedback,'' in \emph{Proc. NeurIPS}, 2022.
+\bibitem{curriculum} Y.~Bengio \emph{et al.}, ``Curriculum learning,'' in \emph{Proc. ICML}, 2009.
+\bibitem{pozar} D.~M.~Pozar, \emph{Microwave Engineering}, 4th~ed.\hskip 1em plus 0.5em minus 0.4em Hoboken, NJ: Wiley, 2012.
+\bibitem{reflexion} N.~Shinn \emph{et al.}, ``Reflexion: Language agents with verbal reinforcement learning,'' in \emph{Proc. NeurIPS}, 2023.
+\bibitem{wiseeda} Y.~Zhang \emph{et al.}, ``WiseEDA: An LLM-assisted automated design framework for RF circuits,'' \emph{IEEE Trans. Microw. Theory Techn.}, 2024.
+\bibitem{chipchat} J.~Blocklove \emph{et al.}, ``Chip-Chat: Challenges and opportunities in conversational hardware design,'' in \emph{Proc. ACM/IEEE DAC}, 2023.
+\bibitem{chipgpt} K.~Chang \emph{et al.}, ``ChipGPT: How far are we from natural language hardware design,'' \emph{arXiv:2305.14019}, 2023.
+\end{thebibliography}
+
+\end{document}

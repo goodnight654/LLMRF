@@ -24,10 +24,10 @@ def check_config():
     config_path = os.path.join(os.path.dirname(__file__), 'config.json')
     
     if not os.path.exists(config_path):
-        print("❌ 找不到 config.json 文件")
+        print(" 找不到 config.json 文件")
         return False
     
-    print("✅ 找到配置文件: config.json")
+    print(" 找到配置文件: config.json")
     print()
     
     with open(config_path, 'r', encoding='utf-8') as f:
@@ -42,18 +42,18 @@ def check_config():
     
     print(f"install_path: {install_path}")
     if os.path.exists(install_path):
-        print("  ✅ 路径存在")
+        print("   路径存在")
     else:
-        print("  ❌ 路径不存在！")
+        print("   路径不存在！")
         print(f"     请检查是否正确安装 ADS")
         return False
     
     print()
     print(f"python_exe: {python_exe}")
     if os.path.exists(python_exe):
-        print("  ✅ Python 解释器存在")
+        print("   Python 解释器存在")
     else:
-        print("  ❌ Python 解释器不存在！")
+        print("   Python 解释器不存在！")
         print(f"     请检查路径是否正确")
         return False
     
@@ -67,7 +67,7 @@ def check_config():
     install_normalized = os.path.normpath(install_path)
     
     if python_normalized.startswith(install_normalized):
-        print("✅ Python 路径与安装路径一致")
+        print(" Python 路径与安装路径一致")
     else:
         print("⚠ 警告：Python 路径与安装路径不一致")
         print(f"   install_path: {install_normalized}")
@@ -95,22 +95,22 @@ def check_config():
     for subdir in key_dirs:
         full_path = os.path.join(install_path, subdir)
         if os.path.exists(full_path):
-            print(f"✅ {subdir}")
+            print(f" {subdir}")
         else:
-            print(f"❌ {subdir} (不存在)")
+            print(f" {subdir} (不存在)")
             all_ok = False
     
     print()
     print("=" * 70)
     
     if all_ok:
-        print("✅ 配置检查通过！")
+        print(" 配置检查通过！")
         print()
         print("建议的 HPEESOF_DIR 环境变量：")
         print(f"  {install_path}")
         return True
     else:
-        print("❌ 配置存在问题，请修正 config.json")
+        print(" 配置存在问题，请修正 config.json")
         print()
         print("常见问题：")
         print("1. 路径使用正斜杠 / 而不是反斜杠 \\")
@@ -147,7 +147,7 @@ def suggest_config():
         python_exe = os.path.join(path, "tools/python/python.exe")
         if os.path.exists(python_exe):
             found.append(path)
-            print(f"✅ 找到 ADS: {path}")
+            print(f" 找到 ADS: {path}")
     
     if found:
         print()
@@ -161,7 +161,7 @@ def suggest_config():
   }}
 }}''')
     else:
-        print("❌ 未找到 ADS 安装")
+        print(" 未找到 ADS 安装")
         print()
         print("请手动检查 ADS 安装位置，然后修改 config.json")
 
